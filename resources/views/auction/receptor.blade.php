@@ -74,5 +74,9 @@
                 </ul>
             </section>
         </div>
+
+        <div class="lg:col-span-2">
+            @include('auction.partials.chat')
+        </div>
     </div>
 @endsection
