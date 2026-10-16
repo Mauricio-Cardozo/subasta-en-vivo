@@ -202,4 +202,51 @@ class AuctionScreensTest extends TestCase
                 ->assertSee('data-lot-winner', escape: false);
         }
     }
+
+    public function test_both_screens_carry_the_chat_hooks(): void
+    {
+        // Sin identidad el historial se ve, pero no el formulario: publicar
+        // requiere un nombre o el rol de subastador.
+        foreach (['/emisor', '/receptor'] as $uri) {
+            $this->get($uri)
+                ->assertOk()
+                ->assertSee('data-chat', escape: false)
+                ->assertSee('data-chat-messages', escape: false)
+                ->assertSee('data-chat-empty', escape: false)
+                ->assertDontSee('data-chat-form', escape: false)
+                ->assertDontSee('data-chat-field', escape: false);
+        }
+    }
+
+    public function test_the_host_can_moderate_the_chat(): void
+    {
+        $this->asHost();
+
+        $this->get('/emisor')
+            ->assertOk()
+            ->assertSee('data-moderate="1"', escape: false)
+            ->assertSee('Podés borrar cualquier mensaje');
+    }
+
+    public function test_a_bidder_chats_without_moderation(): void
+    {
+        $this->asParticipant();
+
+        $this->get('/receptor')
+            ->assertOk()
+            ->assertSee('data-chat-form', escape: false)
+            ->assertSee('data-chat-field', escape: false)
+            ->assertDontSee('data-moderate', escape: false);
+    }
+
+    public function test_a_guest_reads_the_chat_but_has_no_form(): void
+    {
+        // El historial es público; publicar requiere identidad, así que sin
+        // nombre no hay formulario que el navegador pueda usar.
+        $this->get('/receptor')
+            ->assertOk()
+            ->assertSee('data-chat-messages', escape: false)
+            ->assertDontSee('data-chat-form', escape: false)
+            ->assertDontSee('data-chat-field', escape: false);
+    }
 }
