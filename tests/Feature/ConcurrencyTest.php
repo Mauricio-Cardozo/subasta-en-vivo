@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\LotStatus;
 use App\Models\AuctionAction;
 use App\Models\AuctionRoom;
 use App\Models\Bid;
@@ -94,6 +95,26 @@ class ConcurrencyTest extends TestCase
                 'ok' => $result->ok,
                 'reason' => $result->reason,
                 'amount_cents' => $result->context['amount_cents'] ?? null,
+                'extended' => $result->context['extended'] ?? null,
+                'ends_at' => $result->context['ends_at'] ?? null,
+            ];
+        };
+    }
+
+    /**
+     * Tarea que cierra el lote abierto desde otro proceso (cierre manual).
+     */
+    private function closeTask(): Closure
+    {
+        return function (): array {
+            $result = app(AuctionService::class)->closeCurrentLot();
+
+            return [
+                'ok' => $result->ok,
+                'reason' => $result->reason,
+                'status' => $result->context['status'] ?? null,
+                'winner_name' => $result->context['winner_name'] ?? null,
+                'price_cents' => $result->context['price_cents'] ?? null,
             ];
         };
     }
@@ -192,6 +213,115 @@ class ConcurrencyTest extends TestCase
         $this->assertSame(1, Bid::query()->count());
         $this->assertSame(1, $lot->fresh()->room->version);
         $this->assertSame(5_000, $lot->fresh()->current_price_cents);
+    }
+
+    public function test_two_concurrent_closes_settle_the_lot_once(): void
+    {
+        $lot = $this->openLot(['start_price_cents' => 5_000, 'min_increment_cents' => 100]);
+        $leader = Participant::factory()->create(['balance_cents' => 100_000]);
+
+        // Una puja confirmada deja precio y ganador antes de la carrera de cierres.
+        app(AuctionService::class)->placeBid($leader, null);
+
+        $results = array_values(Concurrency::run([
+            $this->closeTask(),
+            $this->closeTask(),
+        ]));
+
+        $winners = array_filter($results, fn (array $result): bool => $result['ok']);
+        $this->assertCount(1, $winners, 'Dos cierres no pueden adjudicar el lote los dos.');
+
+        $loser = array_values(array_filter($results, fn (array $result): bool => ! $result['ok']))[0];
+        $this->assertSame('no_open_lot', $loser['reason']);
+
+        $lot->refresh();
+        $this->assertSame(LotStatus::Sold, $lot->status);
+        $this->assertSame($leader->id, $lot->winner_participant_id);
+
+        // El saldo se descuenta exactamente una vez.
+        $this->assertSame(100_000 - 5_000, $leader->fresh()->balance_cents);
+
+        // Una versión por la puja y una sola por el cierre.
+        $this->assertSame(2, $lot->room->version);
+    }
+
+    public function test_a_close_and_a_bid_leave_a_consistent_lot(): void
+    {
+        $lot = $this->openLot(['start_price_cents' => 5_000, 'min_increment_cents' => 100]);
+        $bidder = Participant::factory()->create(['balance_cents' => 100_000]);
+
+        $results = Concurrency::run([
+            'close' => $this->closeTask(),
+            'bid' => $this->bidTask($bidder->id, null),
+        ]);
+
+        $bid = $results['bid'];
+        $lot->refresh();
+
+        // El cierre siempre encuentra el lote abierto: es el único que lo cierra.
+        $this->assertTrue($results['close']['ok'], 'El cierre no debería fallar nunca.');
+
+        if ($bid['ok']) {
+            // La puja entró y el cierre la adjudicó.
+            $this->assertSame(LotStatus::Sold, $lot->status);
+            $this->assertSame($bidder->id, $lot->winner_participant_id);
+            $this->assertSame(5_000, $lot->current_price_cents);
+            $this->assertSame(100_000 - 5_000, $bidder->fresh()->balance_cents);
+            $this->assertSame(2, $lot->room->version);
+        } else {
+            // El cierre ganó la carrera: sin pujas, queda sin vender.
+            $this->assertContains($bid['reason'], ['lot_closed', 'lot_expired', 'no_open_lot']);
+            $this->assertSame(LotStatus::Unsold, $lot->status);
+            $this->assertNull($lot->winner_participant_id);
+            $this->assertSame(100_000, $bidder->fresh()->balance_cents);
+            $this->assertSame(1, $lot->room->version);
+        }
+
+        $this->assertSame($bid['ok'] ? 1 : 0, Bid::query()->count());
+    }
+
+    public function test_edge_bids_extend_the_close_within_the_cap(): void
+    {
+        $window = (int) config('auction.anti_sniping.window_seconds');
+        $extension = (int) config('auction.anti_sniping.extension_seconds');
+        $maxExtensions = (int) config('auction.anti_sniping.max_extensions');
+
+        $lot = $this->openLot(['start_price_cents' => 5_000, 'min_increment_cents' => 100]);
+
+        // El cierre cae dentro de la ventana final, pero todavía no venció.
+        $originalEndsAt = now()->startOfSecond()->addSeconds($window - 1);
+        $lot->forceFill(['ends_at' => $originalEndsAt])->save();
+
+        $bidders = Participant::factory()->count(3)->create();
+
+        $results = array_values(Concurrency::run(
+            $bidders->map(fn (Participant $participant) => $this->bidTask($participant->id, null))->all()
+        ));
+
+        $accepted = array_filter($results, fn (array $result): bool => $result['ok']);
+        $this->assertCount(3, $accepted, 'Las pujas dentro de la ventana deben aceptarse.');
+
+        $lot->refresh();
+
+        // Cada ronda deja al menos una extensión, nunca más que las pujas ni el tope.
+        $this->assertGreaterThanOrEqual(1, $lot->extensions);
+        $this->assertLessThanOrEqual(min($maxExtensions, count($accepted)), $lot->extensions);
+        $this->assertLessThanOrEqual(
+            $maxExtensions,
+            $lot->extensions,
+            'El anti-sniping no puede pasar su tope.'
+        );
+
+        // El cierre corrido es exactamente el original más las extensiones aplicadas.
+        $this->assertTrue(
+            $originalEndsAt->copy()->addSeconds($lot->extensions * $extension)->equalTo($lot->ends_at),
+            'El cierre no coincide con las extensiones registradas.'
+        );
+
+        // Ninguna puja ni versión se pierde.
+        $this->assertSame(3, Bid::query()->count());
+        $this->assertSame(3, $lot->room->version);
+        $this->assertSame(5_000 + 2 * 100, $lot->current_price_cents);
     }
 
     public function test_a_concurrent_duplicate_action_is_recorded_once(): void
