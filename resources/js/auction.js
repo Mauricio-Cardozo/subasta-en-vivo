@@ -1,4 +1,5 @@
 import './echo';
+import './chat';
 
 /**
  * Puente entre el canal `auction` y el DOM.
