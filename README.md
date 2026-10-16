@@ -131,17 +131,24 @@ No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**
 - Concurrencia real probada contra PostgreSQL en la CI (`tests/Feature/ConcurrencyTest.php`): sin `lockForUpdate` dos pujas simultáneas perderían una actualización, dos cierres adjudicarían dos veces o una puja y un cierre dejarían el lote incoherente.
 - Idempotencia por `action_id` con restricción única `(actor_key, action_id)`; reintentar repite la respuesta original. El guard vive en `App\Services\ActionIdempotency` y lo comparten las pujas y el cierre; la `actor_key` del subastador es un token durable de la sesión, no el id de sesión (que se regenera).
 
+## Observabilidad
+
+- **Logs en JSON:** los canales `auction` (aplicación) y `audit` (auditoría) escriben una línea JSON por registro en `storage/logs/` y rotan a diario, conservando `LOG_DAILY_DAYS` archivos. En `.env.example`, `LOG_CHANNEL=auction`.
+- **`correlation_id` de punta a punta:** el middleware `AssignCorrelationId` toma `X-Correlation-ID` si trae un valor seguro (o genera un UUID), lo comparte con **todos** los registros (`Log::shareContext`) y lo devuelve en la cabecera de la respuesta. Un problema reportado con esa cabecera se encuentra en los logs sin adivinar.
+- **Auditoría:** cada acción que cambia estado —o que se intenta— deja un registro en el canal `audit` con el actor (`actor_key`), la IP, el `action_id`, el resultado (`accepted`/`rejected`/`replayed`/`in_progress`) y el `correlation_id`. Incluye el login del subastador (el **PIN nunca se registra**) y las denegaciones del chat. El guard de idempotencia audita una sola vez por camino, así un reintento no se cuenta como una acción nueva.
+- El valor entrante de `X-Correlation-ID` se valida (`[A-Za-z0-9._-]`, ≤64) para no inyectar en los registros.
+
 ## Estructura
 
 ```
 app/
   Events/            # AuctionStateUpdated, ChatMessagePosted, ChatMessageDeleted
   Http/Controllers/  # AuctionController, ParticipantController, HostAuthController, BidController, ChatController (delgados)
-  Http/Middleware/   # EnsureHost, EnsureParticipant
+  Http/Middleware/   # EnsureHost, EnsureParticipant, AssignCorrelationId
   Http/Requests/     # JoinRequest, HostLoginRequest, OpenLotRequest, CloseLotRequest, PlaceBidRequest, ChatMessageRequest
   Models/            # AuctionRoom, Lot, Participant, Bid, AuctionAction, ChatMessage
-  Services/          # AuctionService, AuctionSnapshot, ChatService, SessionIdentity, ActionIdempotency
-  Support/           # ActionResult, Money
+  Services/          # AuctionService, AuctionSnapshot, ChatService, SessionIdentity, ActionIdempotency, AuditLogger
+  Support/           # ActionResult, Money, CorrelationId, RequestContext
 config/auction.php
 resources/views/auction/   # layout, emisor, receptor, partials/lot, partials/chat
 resources/js/              # auction.js, chat.js
@@ -156,7 +163,7 @@ tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 - [x] **Hito 3 — Pujas y concurrencia:** esquema de pujas e idempotencia, `placeBid` bajo bloqueo, `POST /auction/bids`, pujas en el snapshot, UI de puja y tests de concurrencia real contra PostgreSQL.
 - [x] **Hito 4 — Temporizador, cierre y anti-sniping:** cierre por vencimiento con adjudicación y descuento de saldo, anti-sniping, cierre manual del subastador idempotente, temporizador y resultado en las pantallas, y tests de concurrencia del cierre.
 - [x] **Hito 5 — Chat:** esquema de mensajes; `POST /auction/chat` para pujador y subastador con `ChatMessagePosted` tras el commit; historial por `GET /auction/chat` y moderación por `DELETE` con `ChatMessageDeleted`; panel compartido en vivo (historial por HTTP al cargar y al reconectar) y tests de concurrencia del chat contra PostgreSQL.
-- [ ] **Hito 6 — Logging y trazabilidad.**
+- [x] **Hito 6 — Logging y trazabilidad:** canales `auction`/`audit` en JSON con rotación diaria, `correlation_id` de punta a punta (`X-Correlation-ID` en la respuesta) y auditoría de acciones con el `action_id` y el resultado.
 - [ ] **Hito 7 — Pulido y entrega.**
 
 Cada hito es un milestone en GitHub; cada tarea, un issue; cada issue, una rama y un PR.

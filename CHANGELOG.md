@@ -2,6 +2,25 @@
 
 Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](https://keepachangelog.com/) y [SemVer](https://semver.org/).
 
+## [0.6.0] - 2026-10-16
+
+Hito 6: logging y trazabilidad.
+
+### Agregado
+
+- Canales de log en JSON: `auction` (aplicación) y `audit` (auditoría) con `RotatingFileHandler` + `JsonFormatter` — una línea JSON por registro — y rotación diaria con retención `LOG_DAILY_DAYS`. En `.env.example`, `LOG_CHANNEL=auction`.
+- `App\Support\CorrelationId` (singleton) y middleware global `AssignCorrelationId`: toma `X-Correlation-ID` si trae un valor seguro (`[A-Za-z0-9._-]`, ≤64) o genera un UUID, lo comparte con todos los registros (`Log::shareContext`) y lo devuelve en la cabecera de la respuesta, para atar un reporte del navegador con su rastro en los logs.
+- `App\Services\AuditLogger::record($event, $context)` y `App\Support\RequestContext` (IP de la petición): cada acción que cambia estado —o que se intenta— deja un registro en el canal `audit` con actor (`actor_key`), IP, `action_id`, resultado (`accepted`/`rejected`/`replayed`/`in_progress`) y `correlation_id`.
+- Acciones auditadas: alta de pujador (`identity.joined`), login del subastador (éxito `host.login` y fallo `host.login_failed`, **sin registrar el PIN**), apertura (`auction.lot_open`) y cierre (`auction.lot_close`) de lote, puja (`auction.bid`) y chat (`chat.posted`, `chat.deleted`, `chat.post_denied`, `chat.delete_denied`).
+- `ActionIdempotency::run(..., ?string $event)` audita el resultado una sola vez por camino: un reintento con el mismo `action_id` se marca `replayed` y no se cuenta como acción nueva.
+- `config/auction.php`: `audit.channel` (por defecto `audit`).
+- Tests: `CorrelationIdTest` (cabecera de respuesta, valor entrante seguro/inseguro, contexto compartido), `JsonLogChannelTest` (canales JSON con rotación y `correlation_id` en el contexto) y `AuditLogTest` (alta, login éxito/fallo sin el PIN, puja aceptada/rechazada/repetida, apertura y cierre de lote, chat publicar/borrar/denegar y `correlation_id` por petición).
+
+### Notas
+
+- El `correlation_id` vive una petición: el middleware lo fija al empezar; en consola, `CorrelationId::get()` genera uno si nadie lo fijó.
+- Verificación manual (servidor local): `POST /join` con `X-Correlation-ID: manual-456` responde con esa cabecera y deja en `storage/logs/audit-*.log` la línea JSON `identity.joined` con `correlation_id`, `actor_key` e `ip`.
+
 ## [0.5.0] - 2026-10-16
 
 Hito 5: chat de la sala.
