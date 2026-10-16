@@ -1,5 +1,8 @@
 <?php
 
+// Nombre con el que firma el subastador y que ningún pujador puede tomar.
+$hostName = 'Subastador';
+
 return [
 
     /*
@@ -26,7 +29,7 @@ return [
             'min_length' => 3,
             'max_length' => 20,
             // Nombre reservado para el rol de subastador.
-            'reserved' => ['Subastador'],
+            'reserved' => [$hostName],
         ],
     ],
 
@@ -60,6 +63,8 @@ return [
         'max_length' => 280,
         // Mensajes recuperados al cargar o reconectar (RF-12).
         'history' => 50,
+        // Firma del subastador en el chat: no tiene fila de participante.
+        'host_name' => $hostName,
     ],
 
     'snapshot' => [

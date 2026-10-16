@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AuctionController;
 use App\Http\Controllers\BidController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\Dev\BroadcastController;
 use App\Http\Controllers\HostAuthController;
 use App\Http\Controllers\ParticipantController;
@@ -43,6 +44,12 @@ Route::post('/auction/lots/close', [AuctionController::class, 'closeLot'])
 Route::post('/auction/bids', [BidController::class, 'store'])
     ->middleware(['throttle:bids', 'participant'])
     ->name('auction.bids.store');
+
+// Chat de la sala (RF-11): escribe el pujador o el subastador. La identidad se
+// comprueba en el controlador porque puede ser cualquiera de las dos.
+Route::post('/auction/chat', [ChatController::class, 'store'])
+    ->middleware('throttle:chat-messages')
+    ->name('auction.chat.store');
 
 // Emisor de eventos de prueba: solo se registra en local, así que en
 // producción la ruta no existe.
