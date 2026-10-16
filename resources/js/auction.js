@@ -16,13 +16,42 @@ import './echo';
  */
 const state = {
     version: null,
+    lot: null,
+    bids: null,
+    me: null,
 };
+
+/** Evita un segundo envío mientras la puja está en vuelo. */
+let bidding = false;
+
+/** Un `action_id` por intento: repetir la acción nunca puja dos veces (4.7). */
+function newActionId() {
+    if (typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+    return [
+        hex.slice(0, 8),
+        hex.slice(8, 12),
+        hex.slice(12, 16),
+        hex.slice(16, 20),
+        hex.slice(20),
+    ].join('-');
+}
 
 const endpoints = {
     state: '/auction/state',
     join: '/join',
     hostLogin: '/host/login',
     openLot: '/auction/lots',
+    bid: '/auction/bids',
     devBroadcast: '/dev/broadcast',
 };
 
@@ -45,6 +74,9 @@ const selectors = {
     balance: '[data-balance]',
     bids: '[data-bids]',
     bidsEmpty: '[data-bids-empty]',
+    bidSection: '[data-bid-section]',
+    bidMinimum: '[data-bid-minimum]',
+    bidForm: '[data-bid]',
 };
 
 function find(selector) {
@@ -138,14 +170,118 @@ function renderBids(bids) {
         return;
     }
 
-    // Las pujas llegan en el Hito 3.
-    toggle(selectors.bidsEmpty, ! bids || bids.length === 0);
+    const items = Array.isArray(bids) ? bids : [];
+    const empty = list.querySelector('[data-bids-empty]');
+
+    // El snapshot trae la lista ordenada del servidor: se repinta entera.
+    [...list.children].forEach((child) => {
+        if (child !== empty) {
+            child.remove();
+        }
+    });
+
+    toggle(selectors.bidsEmpty, items.length === 0);
+
+    items.forEach((bid) => {
+        const row = document.createElement('li');
+        row.className = 'flex items-center justify-between gap-3 rounded-md border border-slate-800 bg-slate-950/40 px-3 py-2';
+
+        const author = document.createElement('span');
+        author.className = 'truncate text-slate-300';
+        author.textContent = bid.author_name ?? '—';
+
+        const amount = document.createElement('span');
+        amount.className = 'font-mono text-amber-300';
+        amount.textContent = typeof bid.amount_cents === 'number' ? formatCents(bid.amount_cents) : '—';
+
+        const at = document.createElement('span');
+        at.className = 'text-xs text-slate-600';
+        at.textContent = formatTime(bid.at);
+
+        row.append(author, amount, at);
+        list.append(row);
+    });
+}
+
+/**
+ * ¿Esta sesión va ganando el lote?
+ *
+ * Se compara el nombre propio con `lot.leader_name` (público y único en la
+ * sala) en vez de mirar `me.is_leader` a secas: el broadcast no lleva `me`, así
+ * que ese booleano quedaría pegado al lote anterior al abrirse uno nuevo.
+ */
+function isLeader(lot) {
+    const name = state.me?.name;
+
+    if (! lot || ! name) {
+        return Boolean(state.me?.is_leader);
+    }
+
+    return lot.leader_name === name;
+}
+
+/**
+ * Puja mínima que aplicaría el servidor (4.1): iguala el precio inicial antes
+ * de la primera puja y suma el incremento después. Es solo lo que se muestra en
+ * el botón: el monto no viaja, lo calcula el servidor al atender la acción.
+ */
+function nextMinimum(lot) {
+    if (! lot) {
+        return null;
+    }
+
+    return typeof lot.current_price_cents === 'number'
+        ? lot.current_price_cents + lot.min_increment_cents
+        : lot.start_price_cents;
+}
+
+function renderBidForm() {
+    const section = find(selectors.bidSection);
+
+    if (! section) {
+        return;
+    }
+
+    const lot = state.lot;
+    const open = Boolean(lot) && lot.status === 'open';
+
+    section.hidden = ! open;
+
+    if (! open) {
+        return;
+    }
+
+    const minimum = nextMinimum(lot);
+    const leading = isLeader(lot);
+    const form = find(selectors.bidForm);
+    const button = form?.querySelector('button[type="submit"]');
+
+    setText(selectors.bidMinimum, minimum === null ? '—' : `Puja mínima ${formatCents(minimum)}`);
+
+    if (button) {
+        button.textContent = leading
+            ? 'Ya vas ganando este lote'
+            : (minimum === null ? 'Pujar' : `Pujar ${formatCents(minimum)}`);
+        button.disabled = leading || bidding;
+    }
 }
 
 function render(snapshot) {
+    // El bloque `me` solo viaja en la respuesta HTTP, no en el broadcast: se
+    // aplica antes de cualquier rechazo por versión vieja, así el estado propio
+    // nunca queda desfasado respecto del lote que sí llega en vivo.
+    if (snapshot.me) {
+        state.me = snapshot.me;
+        setText(selectors.balance, typeof snapshot.me.balance_cents === 'number'
+            ? formatCents(snapshot.me.balance_cents)
+            : '—');
+    }
+
     if (typeof snapshot.version === 'number') {
         // Los eventos desordenados o repetidos no se aplican (RNF-04).
         if (state.version !== null && snapshot.version <= state.version) {
+            renderBidForm();
+
             return;
         }
 
@@ -153,20 +289,34 @@ function render(snapshot) {
         setText(selectors.version, String(snapshot.version));
     }
 
-    renderLot(snapshot.lot);
-    renderBids(snapshot.bids);
+    if ('lot' in snapshot) {
+        const previousLotId = state.lot?.id ?? null;
+        state.lot = snapshot.lot;
+
+        // Un error de puja habla del lote que había cuando se envió: si el lote
+        // cambió, el mensaje ya no describe nada de lo que se ve y se borra.
+        if ((state.lot?.id ?? null) !== previousLotId) {
+            const bidForm = find(selectors.bidForm);
+
+            if (bidForm) {
+                clearFormError(bidForm);
+            }
+        }
+    }
+
+    if ('bids' in snapshot) {
+        state.bids = snapshot.bids;
+    }
+
+    renderLot(state.lot);
+    renderBids(state.bids);
+    renderBidForm();
 
     const lastEvent = find(selectors.lastEvent);
 
     if (lastEvent) {
         const time = formatTime(snapshot.server_now);
         lastEvent.textContent = `${describe(snapshot.action)} · ${time}`;
-    }
-
-    if (snapshot.me) {
-        setText(selectors.balance, typeof snapshot.me.balance_cents === 'number'
-            ? formatCents(snapshot.me.balance_cents)
-            : '—');
     }
 }
 
@@ -283,6 +433,43 @@ function numberField(data, name) {
     return Number.parseInt(raw, 10);
 }
 
+/**
+ * Puja del pujador.
+ *
+ * Solo manda `action_id`: el monto efectivo lo decide el servidor y un error
+ * (422) se muestra tal cual, nunca se pinta como éxito. Al confirmarse, se
+ * vuelve a pedir el estado por HTTP: el bloque `me` no viaja en el broadcast.
+ */
+function wireBidForm() {
+    const form = find(selectors.bidForm);
+
+    if (! form) {
+        return;
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        if (bidding) {
+            return;
+        }
+
+        clearFormError(form);
+        bidding = true;
+        renderBidForm();
+
+        try {
+            await postJson(endpoints.bid, { action_id: newActionId() });
+            await loadState();
+        } catch (error) {
+            showFormError(form, error.message);
+        } finally {
+            bidding = false;
+            renderBidForm();
+        }
+    });
+}
+
 function subscribe() {
     if (! window.Echo) {
         setConnection('Echo no disponible', false);
@@ -394,4 +581,5 @@ wireForm('[data-open-lot]', {
 watchConnection();
 subscribe();
 wireDevBroadcast();
+wireBidForm();
 loadState();

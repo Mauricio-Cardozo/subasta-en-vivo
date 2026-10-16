@@ -133,4 +133,41 @@ class AuctionScreensTest extends TestCase
 
         $this->assertSame(1, Participant::query()->count());
     }
+
+    public function test_the_bid_form_only_exists_for_a_session_with_a_name(): void
+    {
+        // Sin identidad no hay formulario de puja que el navegador pueda usar.
+        $this->get('/receptor')
+            ->assertOk()
+            ->assertDontSee('data-bid-section', escape: false);
+
+        $this->asParticipant();
+
+        $this->get('/receptor')
+            ->assertOk()
+            ->assertSee('data-bid-section', escape: false)
+            ->assertSee('data-bid class', escape: false)
+            ->assertSee('data-bid-minimum', escape: false);
+    }
+
+    public function test_the_bidder_screen_lists_recent_bids(): void
+    {
+        $this->asParticipant();
+
+        $this->get('/receptor')
+            ->assertOk()
+            ->assertSee('data-bids', escape: false)
+            ->assertSee('data-bids-empty', escape: false)
+            ->assertSee('Pujas recientes');
+    }
+
+    public function test_the_host_screen_has_no_bid_form(): void
+    {
+        $this->asHost();
+
+        $this->get('/emisor')
+            ->assertOk()
+            ->assertDontSee('data-bid-section', escape: false)
+            ->assertDontSee('data-bid class', escape: false);
+    }
 }
