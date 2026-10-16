@@ -1,6 +1,8 @@
 <?php
 
+use Monolog\Formatter\JsonFormatter;
 use Monolog\Handler\NullHandler;
+use Monolog\Handler\RotatingFileHandler;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogUdpHandler;
 use Monolog\Processor\PsrLogMessageProcessor;
@@ -71,6 +73,40 @@ return [
             'level' => env('LOG_LEVEL', 'debug'),
             'days' => env('LOG_DAILY_DAYS', 14),
             'replace_placeholders' => true,
+        ],
+
+        /*
+         * Canales en JSON del proyecto.
+         *
+         * Cada registro es una línea JSON: se leen y filtran con herramientas
+         * (jq, colectores) sin parsear texto libre. Rotan a diario y conservan
+         * `LOG_DAILY_DAYS` archivos.
+         *
+         * `auction` es el canal de la aplicación; `audit` guarda las acciones
+         * (quién hizo qué, con el `correlation_id` de la petición).
+         */
+        'auction' => [
+            'driver' => 'monolog',
+            'level' => env('LOG_LEVEL', 'debug'),
+            'handler' => RotatingFileHandler::class,
+            'handler_with' => [
+                'filename' => storage_path('logs/auction.log'),
+                'maxFiles' => (int) env('LOG_DAILY_DAYS', 14),
+            ],
+            'formatter' => JsonFormatter::class,
+            'processors' => [PsrLogMessageProcessor::class],
+        ],
+
+        'audit' => [
+            'driver' => 'monolog',
+            'level' => env('LOG_LEVEL', 'debug'),
+            'handler' => RotatingFileHandler::class,
+            'handler_with' => [
+                'filename' => storage_path('logs/audit.log'),
+                'maxFiles' => (int) env('LOG_DAILY_DAYS', 14),
+            ],
+            'formatter' => JsonFormatter::class,
+            'processors' => [PsrLogMessageProcessor::class],
         ],
 
         'slack' => [
