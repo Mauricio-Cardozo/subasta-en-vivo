@@ -1,0 +1,93 @@
+<?php
+
+namespace App\Models;
+
+use App\Enums\LotStatus;
+use Database\Factories\LotFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+/**
+ * Un lote de la sala. Como máximo uno está `open` a la vez (RF-01).
+ *
+ * `current_price_cents` es null hasta la primera puja: mientras tanto el
+ * precio de referencia es `start_price_cents` (4.1). Todos los montos son
+ * enteros en centavos (RNF-03).
+ */
+class Lot extends Model
+{
+    /** @use HasFactory<LotFactory> */
+    use HasFactory;
+
+    protected $fillable = [
+        'room_id',
+        'title',
+        'description',
+        'start_price_cents',
+        'min_increment_cents',
+        'current_price_cents',
+        'leader_participant_id',
+        'status',
+        'started_at',
+        'ends_at',
+        'extensions',
+        'closed_at',
+        'winner_participant_id',
+    ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'status' => LotStatus::class,
+            'start_price_cents' => 'integer',
+            'min_increment_cents' => 'integer',
+            'current_price_cents' => 'integer',
+            'extensions' => 'integer',
+            'started_at' => 'datetime',
+            'ends_at' => 'datetime',
+            'closed_at' => 'datetime',
+        ];
+    }
+
+    /**
+     * @return BelongsTo<AuctionRoom, $this>
+     */
+    public function room(): BelongsTo
+    {
+        return $this->belongsTo(AuctionRoom::class, 'room_id');
+    }
+
+    /**
+     * @return BelongsTo<Participant, $this>
+     */
+    public function leader(): BelongsTo
+    {
+        return $this->belongsTo(Participant::class, 'leader_participant_id');
+    }
+
+    /**
+     * @return BelongsTo<Participant, $this>
+     */
+    public function winner(): BelongsTo
+    {
+        return $this->belongsTo(Participant::class, 'winner_participant_id');
+    }
+
+    public function isOpen(): bool
+    {
+        return $this->status->isOpen();
+    }
+
+    /**
+     * Precio de referencia para la próxima puja: el actual si ya hay pujas
+     * (4.1).
+     */
+    public function referencePriceCents(): int
+    {
+        return $this->current_price_cents ?? $this->start_price_cents;
+    }
+}
