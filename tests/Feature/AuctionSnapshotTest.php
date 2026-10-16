@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\LotStatus;
 use App\Models\AuctionRoom;
+use App\Models\Bid;
 use App\Models\Lot;
 use App\Models\Participant;
 use App\Services\AuctionSnapshot;
@@ -118,5 +119,66 @@ class AuctionSnapshotTest extends TestCase
         $this->assertSame('sold', $publicLot['status']);
         $this->assertSame('Beto', $publicLot['winner_name']);
         $this->assertArrayNotHasKey('winner_participant_id', $publicLot);
+    }
+
+    public function test_the_bids_block_lists_the_most_recent_first(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $lot = Lot::factory()->for($room, 'room')->create();
+        $room->update(['current_lot_id' => $lot->id]);
+
+        $ana = Participant::factory()->create(['name' => 'Ana']);
+        $beto = Participant::factory()->create(['name' => 'Beto']);
+
+        Bid::factory()->create(['lot_id' => $lot->id, 'participant_id' => $ana->id, 'amount_cents' => 5_000]);
+        Bid::factory()->create(['lot_id' => $lot->id, 'participant_id' => $beto->id, 'amount_cents' => 5_100]);
+
+        $bids = (new AuctionSnapshot($room->fresh()))->build()['bids'];
+
+        $this->assertCount(2, $bids);
+        $this->assertSame('Beto', $bids[0]['author_name']);
+        $this->assertSame(5_100, $bids[0]['amount_cents']);
+        $this->assertSame('Ana', $bids[1]['author_name']);
+        $this->assertArrayHasKey('at', $bids[0]);
+    }
+
+    public function test_the_bids_block_is_capped_by_config(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $lot = Lot::factory()->for($room, 'room')->create();
+        $room->update(['current_lot_id' => $lot->id]);
+        $ana = Participant::factory()->create();
+
+        $cap = (int) config('auction.snapshot.bids');
+        Bid::factory()->count($cap + 5)->create(['lot_id' => $lot->id, 'participant_id' => $ana->id]);
+
+        $this->assertCount($cap, (new AuctionSnapshot($room->fresh()))->build()['bids']);
+    }
+
+    public function test_the_bids_block_never_leaks_internal_ids(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $lot = Lot::factory()->for($room, 'room')->create();
+        $room->update(['current_lot_id' => $lot->id]);
+        $ana = Participant::factory()->create(['name' => 'Ana']);
+
+        Bid::factory()->create(['lot_id' => $lot->id, 'participant_id' => $ana->id]);
+
+        $bid = (new AuctionSnapshot($room->fresh()))->build()['bids'][0];
+
+        $this->assertSame(['author_name', 'amount_cents', 'at'], array_keys($bid));
+        $this->assertArrayNotHasKey('participant_id', $bid);
+        $this->assertArrayNotHasKey('session_id', $bid);
+        $this->assertArrayNotHasKey('balance_cents', $bid);
+        $this->assertArrayNotHasKey('id', $bid);
+    }
+
+    public function test_a_lot_without_bids_reports_an_empty_list(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $lot = Lot::factory()->for($room, 'room')->create();
+        $room->update(['current_lot_id' => $lot->id]);
+
+        $this->assertSame([], (new AuctionSnapshot($room->fresh()))->build()['bids']);
     }
 }
