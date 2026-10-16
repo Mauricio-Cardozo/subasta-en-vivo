@@ -21,6 +21,7 @@
     <div class="mt-4 flex items-baseline gap-3">
         <span data-lot-price class="font-mono text-3xl font-semibold">—</span>
         <span class="text-xs uppercase tracking-wide text-slate-500" data-lot-price-label>precio actual</span>
+        <span data-lot-countdown class="ml-auto font-mono text-2xl font-semibold text-amber-300" title="Tiempo restante">—</span>
     </div>
 
     <dl class="mt-4 grid gap-2 text-sm">

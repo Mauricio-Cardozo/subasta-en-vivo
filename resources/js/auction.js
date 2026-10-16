@@ -24,6 +24,16 @@ const state = {
 /** Evita un segundo envío mientras la puja está en vuelo. */
 let bidding = false;
 
+/**
+ * Ancla del temporizador. Se recalcula con el `remaining_ms` del servidor (no
+ * con el reloj del navegador): al llegar un evento (una puja que extiende el
+ * cierre, por ejemplo) el restante se reajusta solo.
+ */
+let countdownDeadline = null;
+
+/** Evita pedir el cierre más de una vez por ancla al llegar a cero. */
+let closeRequested = false;
+
 /** Un `action_id` por intento: repetir la acción nunca puja dos veces (4.7). */
 function newActionId() {
     if (typeof crypto.randomUUID === 'function') {
@@ -51,6 +61,7 @@ const endpoints = {
     join: '/join',
     hostLogin: '/host/login',
     openLot: '/auction/lots',
+    closeLot: '/auction/lots/close',
     bid: '/auction/bids',
     devBroadcast: '/dev/broadcast',
 };
@@ -67,6 +78,7 @@ const selectors = {
     lotStatus: '[data-lot-status]',
     lotPrice: '[data-lot-price]',
     lotPriceLabel: '[data-lot-price-label]',
+    lotCountdown: '[data-lot-countdown]',
     lotLeader: '[data-lot-leader]',
     lotEnds: '[data-lot-ends]',
     lotWinnerRow: '[data-lot-winner-row]',
@@ -77,7 +89,23 @@ const selectors = {
     bidSection: '[data-bid-section]',
     bidMinimum: '[data-bid-minimum]',
     bidForm: '[data-bid]',
+    closeSection: '[data-close-section]',
+    closeForm: '[data-close-lot]',
 };
+
+/**
+ * Estados del servidor traducidos para mostrar (los valores del enum son
+ * `open`, `sold`, `unsold`, `cancelled`).
+ */
+const statusLabels = {
+    open: 'Abierto',
+    sold: 'Vendido',
+    unsold: 'Sin vender',
+    cancelled: 'Cancelado',
+};
+
+/** Umbral para avisar que el cierre está encima. */
+const COUNTDOWN_LOW_MS = 10_000;
 
 function find(selector) {
     return document.querySelector(selector);
@@ -139,9 +167,65 @@ function formatTime(iso) {
     return Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('es-AR');
 }
 
+/** `m:ss` a partir de milisegundos restantes. */
+function formatCountdown(remainingMs) {
+    const total = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function statusLabel(status) {
+    return statusLabels[status] ?? status ?? '';
+}
+
+/** Reancla la cuenta regresiva desde `remaining_ms` del servidor (RF-08). */
+function anchorCountdown(lot) {
+    closeRequested = false;
+
+    countdownDeadline = lot && lot.status === 'open' && typeof lot.remaining_ms === 'number'
+        ? Date.now() + lot.remaining_ms
+        : null;
+}
+
+/**
+ * Dibuja el restante y, al llegar a cero, pide el estado: el cierre lo decide el
+ * servidor (es perezoso), así que el navegador no lo simula.
+ */
+function renderCountdown() {
+    const element = find(selectors.lotCountdown);
+
+    if (element) {
+        if (countdownDeadline === null) {
+            element.textContent = '—';
+        } else {
+            const remaining = countdownDeadline - Date.now();
+
+            element.textContent = formatCountdown(remaining);
+            element.classList.toggle('text-rose-400', remaining <= COUNTDOWN_LOW_MS);
+            element.classList.toggle('text-amber-300', remaining > COUNTDOWN_LOW_MS);
+        }
+    }
+
+    if (countdownDeadline === null || closeRequested) {
+        return;
+    }
+
+    if (countdownDeadline - Date.now() <= 0) {
+        closeRequested = true;
+        loadState();
+    }
+}
+
 function renderLot(lot) {
     toggle(selectors.lotPanel, Boolean(lot));
     toggle(selectors.lotEmpty, ! lot);
+
+    // La cuenta regresiva se reancla con cada estado: una puja que extiende el
+    // cierre (anti-sniping) llega como `remaining_ms` nuevo.
+    anchorCountdown(lot);
+    renderCountdown();
 
     if (! lot) {
         return;
@@ -149,7 +233,7 @@ function renderLot(lot) {
 
     setText(selectors.lotTitle, lot.title ?? 'Sin título');
     setText(selectors.lotDescription, lot.description ?? '');
-    setText(selectors.lotStatus, lot.status ?? '');
+    setText(selectors.lotStatus, statusLabel(lot.status));
 
     // Hasta la primera puja el precio de referencia es el inicial (4.1).
     const hasBids = typeof lot.current_price_cents === 'number';
@@ -266,6 +350,14 @@ function renderBidForm() {
     }
 }
 
+function renderCloseForm() {
+    const lot = state.lot;
+
+    // Solo existe para el subastador (la vista lo renderiza con el rol); con
+    // lote abierto se ofrece cerrar.
+    toggle(selectors.closeSection, Boolean(lot) && lot.status === 'open');
+}
+
 function render(snapshot) {
     // El bloque `me` solo viaja en la respuesta HTTP, no en el broadcast: se
     // aplica antes de cualquier rechazo por versión vieja, así el estado propio
@@ -281,6 +373,7 @@ function render(snapshot) {
         // Los eventos desordenados o repetidos no se aplican (RNF-04).
         if (state.version !== null && snapshot.version <= state.version) {
             renderBidForm();
+            renderCloseForm();
 
             return;
         }
@@ -311,6 +404,7 @@ function render(snapshot) {
     renderLot(state.lot);
     renderBids(state.bids);
     renderBidForm();
+    renderCloseForm();
 
     const lastEvent = find(selectors.lastEvent);
 
@@ -470,6 +564,37 @@ function wireBidForm() {
     });
 }
 
+function wireCloseLot() {
+    const form = find(selectors.closeForm);
+
+    if (! form) {
+        return;
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        clearFormError(form);
+
+        const button = form.querySelector('button[type="submit"]');
+
+        if (button) {
+            button.disabled = true;
+        }
+
+        try {
+            // Solo un `action_id`: reintentar no cierra dos veces (4.7).
+            await postJson(endpoints.closeLot, { action_id: newActionId() });
+            await loadState();
+        } catch (error) {
+            showFormError(form, error.message);
+        } finally {
+            if (button) {
+                button.disabled = false;
+            }
+        }
+    });
+}
+
 function subscribe() {
     if (! window.Echo) {
         setConnection('Echo no disponible', false);
@@ -582,4 +707,6 @@ watchConnection();
 subscribe();
 wireDevBroadcast();
 wireBidForm();
+wireCloseLot();
+setInterval(renderCountdown, 250);
 loadState();
