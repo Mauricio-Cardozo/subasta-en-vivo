@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuctionController;
+use App\Http\Controllers\BidController;
 use App\Http\Controllers\Dev\BroadcastController;
 use App\Http\Controllers\HostAuthController;
 use App\Http\Controllers\ParticipantController;
@@ -32,6 +33,11 @@ Route::get('/auction/state', [AuctionController::class, 'state'])->name('auction
 Route::post('/auction/lots', [AuctionController::class, 'openLot'])
     ->middleware(['throttle:lot-opens', 'host'])
     ->name('auction.lots.store');
+
+// Puja de un participante con identidad (RF-04).
+Route::post('/auction/bids', [BidController::class, 'store'])
+    ->middleware(['throttle:bids', 'participant'])
+    ->name('auction.bids.store');
 
 // Emisor de eventos de prueba: solo se registra en local, así que en
 // producción la ruta no existe.
