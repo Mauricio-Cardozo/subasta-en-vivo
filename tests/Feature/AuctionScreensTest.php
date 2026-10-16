@@ -6,6 +6,14 @@ use Tests\TestCase;
 
 class AuctionScreensTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Los tests no dependen de `npm run build`: sin Vite no hay manifest.
+        $this->withoutVite();
+    }
+
     public function test_index_screen_lists_both_roles(): void
     {
         $this->get('/')
@@ -43,6 +51,13 @@ class AuctionScreensTest extends TestCase
                 ->assertSee('El servidor es la única autoridad')
                 ->assertSee(route('auction.emisor'), escape: false)
                 ->assertSee(route('auction.receptor'), escape: false);
+        }
+    }
+
+    public function test_the_development_trigger_is_hidden_outside_local(): void
+    {
+        foreach (['/', '/emisor', '/receptor'] as $uri) {
+            $this->get($uri)->assertDontSee('data-dev-broadcast', escape: false);
         }
     }
 }
