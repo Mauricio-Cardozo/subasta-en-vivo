@@ -15,16 +15,23 @@ Route::controller(AuctionController::class)->group(function () {
 // Identidad: un pujador se une con un nombre y el subastador inicia sesión con
 // el PIN. Ambas acciones renuevan la sesión del servidor (5.5).
 Route::post('/join', [ParticipantController::class, 'store'])
-    ->middleware('throttle:10,1')
+    ->middleware('throttle:join')
     ->name('auction.join');
 
 Route::post('/host/login', [HostAuthController::class, 'login'])
-    ->middleware('throttle:6,1')
+    ->middleware('throttle:host-login')
     ->name('host.login');
 
 Route::post('/host/logout', [HostAuthController::class, 'logout'])
     ->middleware('host')
     ->name('host.logout');
+
+// Estado y acciones de la subasta.
+Route::get('/auction/state', [AuctionController::class, 'state'])->name('auction.state');
+
+Route::post('/auction/lots', [AuctionController::class, 'openLot'])
+    ->middleware(['throttle:lot-opens', 'host'])
+    ->name('auction.lots.store');
 
 // Emisor de eventos de prueba: solo se registra en local, así que en
 // producción la ruta no existe.
