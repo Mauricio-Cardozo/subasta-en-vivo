@@ -43,8 +43,9 @@ class SessionIdentity
      * Es el participante, no el id de sesión: el id de sesión se regenera al
      * cambiar de identidad (y Laravel lo rota en otras situaciones), mientras
      * que el participante es la identidad durable. Así, reintentar una acción
-     * desde la misma persona devuelve siempre el mismo resultado. Para el
-     * subastador, que no tiene fila de participante, se usa la sesión.
+     * desde la misma persona devuelve siempre el mismo resultado. El subastador
+     * no tiene fila de participante: usa el token estable de su sesión
+     * (`host:{token}`).
      */
     public function actorKey(Request $request): string
     {
