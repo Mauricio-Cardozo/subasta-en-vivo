@@ -49,6 +49,14 @@ class Participant extends Model
     }
 
     /**
+     * @return HasMany<ChatMessage, $this>
+     */
+    public function chatMessages(): HasMany
+    {
+        return $this->hasMany(ChatMessage::class);
+    }
+
+    /**
      * ¿Le alcanza el saldo para pujar este monto? (RF-05)
      */
     public function canAfford(int $amountCents): bool
