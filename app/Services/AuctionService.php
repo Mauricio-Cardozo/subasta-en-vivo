@@ -152,14 +152,25 @@ class AuctionService
                 'leader_participant_id' => $participant->id,
             ])->save();
 
+            // Anti-sniping: una puja aceptada en la ventana final corre el
+            // cierre. La extensión y la puja son una sola transición (4.3).
+            $extended = $this->applyAntiSniping($lot);
+
             $room->forceFill(['version' => $room->version + 1])->save();
             $room->load('currentLot.leader');
+
+            $summary = "{$participant->name} pujó ".Money::format($amount);
+
+            if ($extended) {
+                $summary .= " y se extendió el cierre ({$lot->extensions}/"
+                    .config('auction.anti_sniping.max_extensions').')';
+            }
 
             AuctionStateUpdated::dispatch(
                 (new AuctionSnapshot($room))->build(
                     action: [
                         'type' => 'bid_placed',
-                        'summary' => "{$participant->name} pujó ".Money::format($amount),
+                        'summary' => $summary,
                     ],
                 )
             );
@@ -167,6 +178,8 @@ class AuctionService
             return ActionResult::success([
                 'bid_id' => $bid->id,
                 'amount_cents' => $amount,
+                'extended' => $extended,
+                'ends_at' => $lot->ends_at->toIso8601String(),
                 'version' => $room->version,
             ]);
         });
@@ -291,6 +304,38 @@ class AuctionService
         );
 
         return $lot;
+    }
+
+    /**
+     * Anti-sniping (4.3): una puja aceptada dentro de la ventana final corre el
+     * cierre, con un tope de extensiones para que la subasta no dure para
+     * siempre. Los valores salen de `config/auction.php`.
+     *
+     * Espera el lote bloqueado. Devuelve true si extendió el cierre.
+     */
+    private function applyAntiSniping(Lot $lot): bool
+    {
+        $maxExtensions = (int) config('auction.anti_sniping.max_extensions');
+
+        if ($lot->extensions >= $maxExtensions) {
+            return false;
+        }
+
+        $windowMs = (int) config('auction.anti_sniping.window_seconds') * 1000;
+        $remainingMs = $lot->ends_at->getTimestampMs() - now()->getTimestampMs();
+
+        if ($remainingMs > $windowMs) {
+            return false;
+        }
+
+        $lot->forceFill([
+            'ends_at' => $lot->ends_at->copy()->addSeconds(
+                (int) config('auction.anti_sniping.extension_seconds')
+            ),
+            'extensions' => $lot->extensions + 1,
+        ])->save();
+
+        return true;
     }
 
     /**
