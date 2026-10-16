@@ -10,6 +10,21 @@ jobs:
     name: Build, lint & test
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: auction
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: auction_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U auction"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,7 +33,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: mbstring, bcmath, sqlite3, pdo_sqlite
+          extensions: mbstring, bcmath, sqlite3, pdo_sqlite, pdo_pgsql, pdo_mysql
           coverage: none
 
       - name: Setup Node
@@ -46,3 +61,13 @@ jobs:
 
       - name: Tests
         run: php artisan test
+
+      - name: Concurrency tests (PostgreSQL)
+        env:
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_DATABASE: auction_test
+          DB_USERNAME: auction
+          DB_PASSWORD: secret
+        run: php artisan test --filter=ConcurrencyTest
