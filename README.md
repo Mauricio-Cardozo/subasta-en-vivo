@@ -54,46 +54,62 @@ php artisan test           # tests
 
 La CI de GitHub Actions corre ambos (más `npm run build`) en cada PR y bloquea el merge en `main` si fallan.
 
-## Flujo en tiempo real (estado actual)
+## Flujo en tiempo real
 
 ```
-navegador (/emisor, /receptor)          servidor                         clientes
-        │                                   │                               │
-        │  GET /emisor | /receptor ────────►│  Blade + auction.js           │
-        │◄──────────────────────────────────│                               │
-        │  Echo: channel('auction')         │                               │
-        │◄──── WebSocket (Reverb :8080) ────│◄── AuctionStateUpdated ───────│
-        │  dibuja snapshot (textContent)    │     (solo tras el commit)     │
+navegador (/emisor, /receptor)              servidor                        clientes
+        │                                       │                               │
+        │  GET /emisor | /receptor ────────────►│  Blade (según la sesión)      │
+        │  GET /auction/state ─────────────────►│  AuctionSnapshot              │
+        │◄────── estado inicial (no-store) ─────│                               │
+        │  Echo: channel('auction')             │                               │
+        │◄──────── WebSocket (Reverb :8080) ────│◄── AuctionStateUpdated ───────│
+        │  dibuja snapshot (textContent)        │     (solo tras el commit)     │
+        │  POST /join | /host/login             │                               │
+        │  POST /auction/lots (solo subastador) │  AuctionService + lockForUpdate│
 ```
 
 - `window.Echo.channel('auction').listen('.AuctionStateUpdated', …)` — un único listener por página (`resources/js/auction.js`).
+- El estado inicial se pide por **HTTP** (`GET /auction/state`); al reconectar también. Reverb no reemplaza al endpoint.
 - El cliente ignora eventos con `version` menor o igual a la mostrada.
 - El indicador del encabezado refleja el estado real de la conexión (`En vivo`, `Conectando…`, `Reconectando…`, `Sin conexión`).
 - En `APP_ENV=local` aparece el botón **Emitir evento de prueba**, que llama a `POST /dev/broadcast` (ruta que no existe en otros entornos).
-- Todavía no hay estado persistido: la sala, los lotes y las pujas llegan en el Hito 2 y 3.
+
+## Identidad
+
+No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**.
+
+- **Pujador:** `POST /join` con un nombre validado (longitud, caracteres, reservado `Subastador` y único sin distinguir mayúsculas) guarda un `participants` ligado a la sesión y le asigna el saldo virtual.
+- **Subastador:** `POST /host/login` compara el PIN de `AUCTION_HOST_PIN` en tiempo constante. Sin PIN configurado el acceso **siempre** falla. El rol queda en la sesión, nunca en el navegador.
+- El vínculo navegador↔participante se guarda hasheado (`sha256(id de sesión | app key)`) en `participants.session_id`: es la futura `actor_key` de la idempotencia y nunca viaja al cliente.
+- Al cambiar de identidad (unirse o loguearse como subastador) la sesión se invalida: el navegador no arrastra privilegios del rol anterior.
+- Los middleware `participant` y `host` protegen las acciones; el servidor responde 403 sin el rol.
 
 ## Arquitectura (resumen)
 
 - Toda acción que modifica estado es atómica: transacción + `lockForUpdate` sobre la fila de la sala (`auction_rooms`), con un único orden de bloqueo.
-- El servidor valida todo: montos, saldo, tiempo y rol. Ningún valor económico lo decide el cliente; los montos son enteros en centavos.
+- El servidor valida todo: montos, saldo, tiempo y rol. Ningún valor económico lo decide el cliente; los montos son enteros en centavos. Las acciones devuelven un `ActionResult`: un rechazo de negocio es un 422 con motivo, nunca una excepción ni un evento.
+- `AuctionSnapshot` es el serializador único del estado público: lo comparten el evento y `GET /auction/state`, y solo expone nombres y montos (nunca ids internos, sesiones ni saldos ajenos).
 - El broadcast (`AuctionStateUpdated`, canal público `auction`) se emite solo después del `commit`. Un rechazo no emite evento de éxito: responde 422 y se audita.
 - Cierre perezoso sin cron: el vencimiento se resuelve dentro de cada acción y de `GET /auction/state` (con `Cache-Control: no-store` e idempotente).
 - `version` es la versión del estado persistido de la sala: sube una vez por transición confirmada y permite ignorar eventos desordenados. El chat no la usa: se ordena por `id`.
-- Balance y reglas en `config/auction.php`; la lógica de subasta vive en `app/Services/AuctionService.php`; los controladores son delgados.
+- Balance y reglas en `config/auction.php` (incluidos los límites de peticiones); la lógica de subasta vive en `app/Services/AuctionService.php`; los controladores son delgados.
 - Anti-sniping con tope de extensiones; idempotencia por `action_id` con restricción única `(actor_key, action_id)`.
 
 ## Estructura
 
 ```
 app/
-  Events/          # AuctionStateUpdated, ChatMessagePosted, ChatMessageDeleted
-  Http/Controllers/  # AuctionController, ChatController, HostAuthController (delgados)
-  Http/Middleware/ # AssignCorrelationId, EnsureHost, EnsureParticipant
-  Models/          # AuctionRoom, Lot, Bid, Participant, ChatMessage, AuctionAction
-  Services/        # AuctionService, ChatService (toda la lógica)
+  Events/            # AuctionStateUpdated, ChatMessagePosted, ChatMessageDeleted
+  Http/Controllers/  # AuctionController, ParticipantController, HostAuthController (delgados)
+  Http/Middleware/   # EnsureHost, EnsureParticipant
+  Http/Requests/     # JoinRequest, HostLoginRequest, OpenLotRequest
+  Models/            # AuctionRoom, Lot, Participant (+ Bid, ChatMessage en Hito 3/5)
+  Services/          # AuctionService, AuctionSnapshot, SessionIdentity
+  Support/           # ActionResult
 config/auction.php
-resources/views/auction/   # layout, emisor, receptor
-resources/js/              # auction.js, chat.js
+resources/views/auction/   # layout, emisor, receptor, partials/lot
+resources/js/              # auction.js (+ chat.js en Hito 5)
 tests/Feature/, tests/Unit/
 ```
 
@@ -101,7 +117,7 @@ tests/Feature/, tests/Unit/
 
 - [x] **Hito 0 — Preparación:** repo, Laravel 12 + Reverb + Echo + Vite, Pint, CI.
 - [x] **Hito 1 — Dos pantallas conectadas:** `/emisor` y `/receptor` con un evento de prueba.
-- [ ] **Hito 2 — Sala, lotes y estado compartido.**
+- [x] **Hito 2 — Sala, lotes y estado compartido:** esquema y balance, identidad (alta + PIN), apertura de lote bajo bloqueo y estado público por HTTP.
 - [ ] **Hito 3 — Pujas y concurrencia** (tests contra MySQL/PostgreSQL).
 - [ ] **Hito 4 — Temporizador, cierre y anti-sniping.**
 - [ ] **Hito 5 — Chat.**
