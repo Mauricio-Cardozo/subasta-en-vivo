@@ -58,6 +58,24 @@ class AuctionScriptGuardTest extends TestCase
     }
 
     /**
+     * El liderazgo del lote se deduce del estado público del lote, no del
+     * bloque `me`: el broadcast no lleva `me`, así que al abrirse un lote nuevo
+     * ese booleano quedaría pegado al lote anterior (bug real visto al probar
+     * dos navegadores a mano).
+     */
+    public function test_leadership_is_read_from_the_public_lot(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString(
+            'const leading = isLeader(lot)',
+            $code,
+            'El botón de puja debe decidir con el lote actual, no con `me.is_leader`.'
+        );
+        $this->assertStringContainsString('lot.leader_name === name', $code);
+    }
+
+    /**
      * Las URLs del cliente son un contrato con las rutas del servidor: si una
      * se renombra, el cliente fallaría en silencio.
      */
@@ -70,9 +88,26 @@ class AuctionScriptGuardTest extends TestCase
             route('auction.join', absolute: false),
             route('host.login', absolute: false),
             route('auction.lots.store', absolute: false),
+            route('auction.bids.store', absolute: false),
         ] as $uri) {
             $this->assertStringContainsString("'{$uri}'", $contents, "El cliente no conoce {$uri}.");
         }
+    }
+
+    /**
+     * El cliente no manda montos: la puja efectiva la calcula el servidor con
+     * la información que tiene en la transacción. Solo viaja un `action_id`
+     * nuevo por intento, que es lo que hace la acción idempotente.
+     */
+    public function test_the_bid_request_carries_only_an_action_id(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString(
+            'postJson(endpoints.bid, { action_id: newActionId() })',
+            $code,
+            'La puja debe ir solo con un action_id: el monto lo decide el servidor.'
+        );
     }
 
     /**
