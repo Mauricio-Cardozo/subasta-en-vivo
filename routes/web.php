@@ -34,6 +34,11 @@ Route::post('/auction/lots', [AuctionController::class, 'openLot'])
     ->middleware(['throttle:lot-opens', 'host'])
     ->name('auction.lots.store');
 
+// Cierre manual del subastador (RF-03).
+Route::post('/auction/lots/close', [AuctionController::class, 'closeLot'])
+    ->middleware(['throttle:lot-closes', 'host'])
+    ->name('auction.lots.close');
+
 // Puja de un participante con identidad (RF-04).
 Route::post('/auction/bids', [BidController::class, 'store'])
     ->middleware(['throttle:bids', 'participant'])

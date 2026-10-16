@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Participant;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 /**
  * Identidad derivada de la sesión del servidor (5.5).
@@ -18,6 +19,15 @@ class SessionIdentity
     public const PARTICIPANT_KEY = 'participant_id';
 
     private const HOST_KEY = 'is_host';
+
+    /**
+     * Token durable del subastador dentro de la sesión.
+     *
+     * No se usa el id de sesión para la `actor_key` del subastador: el id se
+     * regenera (login, invalidaciones) y en las pruebas cambia en cada
+     * petición, mientras que el token es un dato de la sesión y sobrevive.
+     */
+    private const HOST_TOKEN_KEY = 'host_token';
 
     /**
      * Hash estable y no reversible del id de sesión actual.
@@ -44,9 +54,17 @@ class SessionIdentity
             return 'participant:'.$participant->id;
         }
 
-        $prefix = $this->isHost($request) ? 'host' : 'session';
+        if ($this->isHost($request)) {
+            $token = $request->session()->get(self::HOST_TOKEN_KEY);
 
-        return $prefix.':'.$this->hash($request);
+            if (is_string($token) && $token !== '') {
+                return 'host:'.$token;
+            }
+
+            return 'host:'.$this->hash($request);
+        }
+
+        return 'session:'.$this->hash($request);
     }
 
     /**
@@ -101,10 +119,11 @@ class SessionIdentity
     {
         $this->renew($request);
         $request->session()->put(self::HOST_KEY, true);
+        $request->session()->put(self::HOST_TOKEN_KEY, (string) Str::uuid());
     }
 
     public function forgetHost(Request $request): void
     {
-        $request->session()->forget(self::HOST_KEY);
+        $request->session()->forget([self::HOST_KEY, self::HOST_TOKEN_KEY]);
     }
 }

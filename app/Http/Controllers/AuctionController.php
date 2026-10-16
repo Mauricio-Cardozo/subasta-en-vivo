@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\CloseLotRequest;
 use App\Http\Requests\OpenLotRequest;
 use App\Models\Participant;
+use App\Services\ActionIdempotency;
 use App\Services\AuctionService;
 use App\Services\AuctionSnapshot;
 use App\Services\SessionIdentity;
+use App\Support\ActionResult;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,6 +19,7 @@ class AuctionController extends Controller
     public function __construct(
         private readonly AuctionService $auction,
         private readonly SessionIdentity $identity,
+        private readonly ActionIdempotency $idempotency,
     ) {}
 
     /**
@@ -102,5 +106,20 @@ class AuctionController extends Controller
         }
 
         return response()->json($result->context, 201);
+    }
+
+    /**
+     * Cierra el lote abierto antes de tiempo (solo subastador, RF-03).
+     *
+     * Idempotente por `action_id`, como las pujas: reintentar repite la
+     * respuesta original en lugar de volver a cerrar y descontar.
+     */
+    public function closeLot(CloseLotRequest $request): JsonResponse
+    {
+        return $this->idempotency->run(
+            $this->identity->actorKey($request),
+            $request->string('action_id')->toString(),
+            fn (): ActionResult => $this->auction->closeCurrentLot(),
+        );
     }
 }
