@@ -170,4 +170,36 @@ class AuctionScreensTest extends TestCase
             ->assertDontSee('data-bid-section', escape: false)
             ->assertDontSee('data-bid class', escape: false);
     }
+
+    public function test_the_host_can_close_the_open_lot_from_the_screen(): void
+    {
+        $this->asHost();
+
+        $this->get('/emisor')
+            ->assertOk()
+            ->assertSee('data-close-section', escape: false)
+            ->assertSee('data-close-lot', escape: false)
+            ->assertSee('Cerrar lote');
+    }
+
+    public function test_the_bidder_has_no_close_button(): void
+    {
+        $this->asParticipant();
+
+        $this->get('/receptor')
+            ->assertOk()
+            ->assertDontSee('data-close-lot', escape: false)
+            ->assertDontSee('data-close-section', escape: false);
+    }
+
+    public function test_both_screens_show_the_countdown_and_the_winner_row(): void
+    {
+        foreach (['/emisor', '/receptor'] as $uri) {
+            $this->get($uri)
+                ->assertOk()
+                ->assertSee('data-lot-countdown', escape: false)
+                ->assertSee('data-lot-winner-row', escape: false)
+                ->assertSee('data-lot-winner', escape: false);
+        }
+    }
 }

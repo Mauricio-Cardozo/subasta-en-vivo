@@ -88,6 +88,7 @@ class AuctionScriptGuardTest extends TestCase
             route('auction.join', absolute: false),
             route('host.login', absolute: false),
             route('auction.lots.store', absolute: false),
+            route('auction.lots.close', absolute: false),
             route('auction.bids.store', absolute: false),
         ] as $uri) {
             $this->assertStringContainsString("'{$uri}'", $contents, "El cliente no conoce {$uri}.");
@@ -107,6 +108,31 @@ class AuctionScriptGuardTest extends TestCase
             'postJson(endpoints.bid, { action_id: newActionId() })',
             $code,
             'La puja debe ir solo con un action_id: el monto lo decide el servidor.'
+        );
+    }
+
+    /**
+     * El temporizador se calcula con el `remaining_ms` del servidor, no con el
+     * reloj del navegador (RF-08).
+     */
+    public function test_the_countdown_uses_the_server_remaining_time(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString('lot.remaining_ms', $code);
+    }
+
+    /**
+     * El cierre del subastador también es idempotente: manda solo un `action_id`.
+     */
+    public function test_the_close_request_carries_only_an_action_id(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString(
+            'postJson(endpoints.closeLot, { action_id: newActionId() })',
+            $code,
+            'El cierre debe ir solo con un action_id.'
         );
     }
 

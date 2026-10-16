@@ -84,6 +84,28 @@
 
         <div class="grid gap-6">
             @include('auction.partials.lot')
+
+            @if ($isHost)
+                {{--
+                    Cierre manual (RF-03). El JS lo muestra solo con lote abierto y
+                    manda únicamente un `action_id`: reintentar no cierra dos veces.
+                --}}
+                <section data-close-section hidden class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+                    <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Cerrar lote</h2>
+                    <p class="mt-1 text-sm text-slate-500">
+                        Cierra el lote ahora mismo y lo adjudica al mejor postor. Si nadie pujó, queda sin vender.
+                    </p>
+
+                    <form data-close-lot class="mt-4 grid gap-3 text-sm">
+                        <p data-form-error hidden class="rounded-md border border-rose-800 bg-rose-950/40 px-3 py-2 text-rose-300"></p>
+
+                        <button type="submit"
+                                class="justify-self-start rounded-md bg-rose-600 px-4 py-2 font-medium text-slate-50 transition hover:bg-rose-500 disabled:opacity-50">
+                            Cerrar lote
+                        </button>
+                    </form>
+                </section>
+            @endif
         </div>
     </div>
 @endsection
