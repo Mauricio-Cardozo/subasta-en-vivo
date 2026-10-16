@@ -3,16 +3,19 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\ChatMessageRequest;
+use App\Models\ChatMessage;
 use App\Services\ChatService;
 use App\Services\SessionIdentity;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Chat de la sala (RF-11).
  *
- * Pueden escribir el pujador (identidad de sesión) y el subastador. El servidor
- * decide quién es y con qué nombre firma; el navegador solo manda el texto. La
- * validación del texto vive en `ChatMessageRequest`.
+ * Publican el pujador (identidad de sesión) y el subastador; el historial es
+ * público, como el estado de la subasta. El servidor decide quién es, con qué
+ * nombre firma y quién puede borrar; el navegador solo manda el texto.
  */
 class ChatController extends Controller
 {
@@ -20,6 +23,19 @@ class ChatController extends Controller
         private readonly ChatService $chat,
         private readonly SessionIdentity $identity,
     ) {}
+
+    /**
+     * Historial de la sala (RF-12).
+     *
+     * Fuente de verdad al cargar o reconectar: Reverb no repite lo que pasó sin
+     * conexión. `no-store` evita mostrar un historial viejo.
+     */
+    public function index(): JsonResponse
+    {
+        return response()
+            ->json(['messages' => $this->chat->history()])
+            ->header('Cache-Control', 'no-store');
+    }
 
     public function store(ChatMessageRequest $request): JsonResponse
     {
@@ -39,5 +55,27 @@ class ChatController extends Controller
         );
 
         return response()->json($this->chat->payload($message), 201);
+    }
+
+    /**
+     * Borra un mensaje: puede el autor o el subastador (moderación).
+     */
+    public function destroy(Request $request, ChatMessage $message): Response
+    {
+        $participant = $this->identity->participant($request);
+
+        $isHost = $this->identity->isHost($request);
+        $isAuthor = $participant !== null && $message->participant_id === $participant->id;
+
+        if (! $isHost && ! $isAuthor) {
+            return response()->json([
+                'reason' => 'forbidden',
+                'message' => 'Solo el autor o el subastador pueden borrar este mensaje.',
+            ], 403);
+        }
+
+        $this->chat->delete($message);
+
+        return response()->noContent();
     }
 }
