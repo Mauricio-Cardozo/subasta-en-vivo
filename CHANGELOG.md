@@ -2,6 +2,30 @@
 
 Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](https://keepachangelog.com/) y [SemVer](https://semver.org/).
 
+## [0.4.0] - 2026-10-16
+
+Hito 4: temporizador, cierre y anti-sniping.
+
+### Agregado
+
+- Cierre del lote con adjudicación y descuento de saldo: `AuctionService::closeCurrentLot()` (manual) y `closeLotIfDue()` (perezoso por vencimiento) comparten `settle()`, que decide ganador, descuenta el saldo una sola vez y sube la `version` una sola vez. Sin pujas, el lote queda `unsold`.
+- Anti-sniping (`applyAntiSniping()`): una puja aceptada dentro de `window_seconds` del cierre corre `ends_at` `extension_seconds`, con tope `max_extensions`; la extensión y la puja son una sola transición de versión.
+- `POST /auction/lots/close` (solo subastador, middleware `host` y límite `lot-closes`): cierra el lote abierto y devuelve el resultado (estado, ganador, monto, versión); es idempotente por `action_id`.
+- `App\Services\ActionIdempotency`: guard de idempotencia `(actor_key, action_id)` extraído de `BidController` y compartido por las pujas y el cierre (201 éxito / 422 rechazo / 409 acción en curso; un error inesperado libera la reclamación).
+- La `actor_key` del subastador pasa a ser un token durable de la sesión (`host_token`). Antes se derivaba del id de sesión, que se regenera (login, invalidaciones), así que su idempotencia no podía funcionar de verdad.
+- UI: temporizador `m:ss` en el panel calculado con el `remaining_ms` del servidor (se reancla con cada estado), estado traducido (`Abierto`, `Vendido`, `Sin vender`, `Cancelado`), fila del ganador y botón **Cerrar lote** para el subastador.
+- Tests de concurrencia del cierre contra PostgreSQL: dos cierres simultáneos adjudican una sola vez, un cierre contra una puja deja un lote coherente en cualquier orden y tres pujas al borde extienden el cierre sin perderse ni pasarse del tope.
+
+### Cambiado
+
+- `placeBid()` ahora cierra perezosamente el lote vencido antes de evaluar la puja; un lote no abierto responde `lot_expired` si el plazo pasó o `lot_closed` si lo cerró el subastador. Se eliminó el chequeo de vencimiento independiente que quedaba inalcanzable.
+- `BidController` dejó de contener la lógica de idempotencia: usa `ActionIdempotency`.
+
+### Notas
+
+- `GET /auction/state` mantiene el cierre perezoso con una comprobación barata previa (sin `lockForUpdate` en cada lectura); solo abre transacción si de verdad hay un lote vencido.
+- Verificación manual con dos navegadores (Reverb real): el temporizador baja en pantalla, el lote vence solo y queda `Sin vender`/`Vendido` con el saldo descontado, cambia en vivo por el anti-sniping y el subastador puede cerrar a mano.
+
 ## [0.3.0] - 2026-10-16
 
 Hito 3: pujas y concurrencia.

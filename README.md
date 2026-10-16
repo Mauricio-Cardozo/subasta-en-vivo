@@ -76,6 +76,7 @@ navegador (/emisor, /receptor)              servidor                        clie
         │  dibuja snapshot (textContent)        │     (solo tras el commit)     │
         │  POST /join | /host/login             │                               │
         │  POST /auction/lots (solo subastador) │  AuctionService + lockForUpdate│
+        │  POST /auction/lots/close (subastador)│  closeCurrentLot + lockForUpdate│
         │  POST /auction/bids (solo pujador) ──►│  placeBid + lockForUpdate     │
 ```
 
@@ -90,6 +91,12 @@ navegador (/emisor, /receptor)              servidor                        clie
 - El pujador manda **solo un `action_id`** (`POST /auction/bids`); el monto efectivo lo calcula el servidor con el estado que tiene bajo bloqueo. El botón muestra la puja mínima que saldría del servidor, pero esa cuenta es solo informativa.
 - Reintentar con el mismo `action_id` devuelve la respuesta original (misma puja, mismo rechazo): la acción no se aplica dos veces.
 - Un 422 del servidor se muestra **tal cual** en el formulario; nunca se pinta como éxito.
+
+### Cerrar el lote
+
+- El subastador cierra a mano con `POST /auction/lots/close` (solo con lote abierto, idempotente por `action_id` igual que las pujas). Comparte el desenlace con el vencimiento: con pujas queda `sold` y se descuenta el saldo; sin pujas, `unsold`.
+- El **temporizador** del panel se calcula con el `remaining_ms` del servidor (no con el reloj del navegador) y se reancla con cada estado; al llegar a cero pide el estado para que el servidor liquide el lote. El navegador nunca simula el cierre.
+- Una puja dentro de la **ventana final** corre el cierre (anti-sniping, con tope de extensiones); el panel lo refleja en el resumen del evento y en el contador reajustado.
 
 ## Identidad
 
@@ -108,11 +115,11 @@ No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**
 - El servidor valida todo: montos, saldo, tiempo y rol. Ningún valor económico lo decide el cliente; los montos son enteros en centavos. Las acciones devuelven un `ActionResult`: un rechazo de negocio es un 422 con motivo, nunca una excepción ni un evento.
 - `AuctionSnapshot` es el serializador único del estado público: lo comparten el evento y `GET /auction/state`, y solo expone nombres y montos (nunca ids internos, sesiones ni saldos ajenos). Incluye las últimas pujas del lote abierto.
 - El broadcast (`AuctionStateUpdated`, canal público `auction`) se emite solo después del `commit`. Un rechazo no emite evento de éxito: responde 422 y se audita.
-- Cierre perezoso sin cron: el vencimiento se resuelve dentro de cada acción y de `GET /auction/state` (con `Cache-Control: no-store` e idempotente).
+- Cierre perezoso sin cron: el vencimiento se resuelve dentro de cada acción y de `GET /auction/state` (con `Cache-Control: no-store` e idempotente); el subastador puede cerrar antes con `POST /auction/lots/close`.
 - `version` es la versión del estado persistido de la sala: sube una vez por transición confirmada y permite ignorar eventos desordenados. El chat no la usa: se ordena por `id`.
 - Balance y reglas en `config/auction.php` (incluidos los límites de peticiones); la lógica de subasta vive en `app/Services/AuctionService.php`; los controladores son delgados.
-- Concurrencia real probada contra PostgreSQL en la CI (`tests/Feature/ConcurrencyTest.php`): sin `lockForUpdate` dos pujas simultáneas perderían una actualización.
-- Idempotencia por `action_id` con restricción única `(actor_key, action_id)`; reintentar repite la respuesta original.
+- Concurrencia real probada contra PostgreSQL en la CI (`tests/Feature/ConcurrencyTest.php`): sin `lockForUpdate` dos pujas simultáneas perderían una actualización, dos cierres adjudicarían dos veces o una puja y un cierre dejarían el lote incoherente.
+- Idempotencia por `action_id` con restricción única `(actor_key, action_id)`; reintentar repite la respuesta original. El guard vive en `App\Services\ActionIdempotency` y lo comparten las pujas y el cierre; la `actor_key` del subastador es un token durable de la sesión, no el id de sesión (que se regenera).
 
 ## Estructura
 
@@ -121,9 +128,9 @@ app/
   Events/            # AuctionStateUpdated, ChatMessagePosted, ChatMessageDeleted
   Http/Controllers/  # AuctionController, ParticipantController, HostAuthController, BidController (delgados)
   Http/Middleware/   # EnsureHost, EnsureParticipant
-  Http/Requests/     # JoinRequest, HostLoginRequest, OpenLotRequest, PlaceBidRequest
+  Http/Requests/     # JoinRequest, HostLoginRequest, OpenLotRequest, CloseLotRequest, PlaceBidRequest
   Models/            # AuctionRoom, Lot, Participant, Bid, AuctionAction (+ ChatMessage en Hito 5)
-  Services/          # AuctionService, AuctionSnapshot, SessionIdentity
+  Services/          # AuctionService, AuctionSnapshot, SessionIdentity, ActionIdempotency
   Support/           # ActionResult, Money
 config/auction.php
 resources/views/auction/   # layout, emisor, receptor, partials/lot
@@ -137,7 +144,7 @@ tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 - [x] **Hito 1 — Dos pantallas conectadas:** `/emisor` y `/receptor` con un evento de prueba.
 - [x] **Hito 2 — Sala, lotes y estado compartido:** esquema y balance, identidad (alta + PIN), apertura de lote bajo bloqueo y estado público por HTTP.
 - [x] **Hito 3 — Pujas y concurrencia:** esquema de pujas e idempotencia, `placeBid` bajo bloqueo, `POST /auction/bids`, pujas en el snapshot, UI de puja y tests de concurrencia real contra PostgreSQL.
-- [ ] **Hito 4 — Temporizador, cierre y anti-sniping.**
+- [x] **Hito 4 — Temporizador, cierre y anti-sniping:** cierre por vencimiento con adjudicación y descuento de saldo, anti-sniping, cierre manual del subastador idempotente, temporizador y resultado en las pantallas, y tests de concurrencia del cierre.
 - [ ] **Hito 5 — Chat.**
 - [ ] **Hito 6 — Logging y trazabilidad.**
 - [ ] **Hito 7 — Pulido y entrega.**
