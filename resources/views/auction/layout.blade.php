@@ -29,10 +29,22 @@
                 @endforeach
             </nav>
 
-            <p class="flex items-center gap-2 text-xs text-slate-400">
-                <span class="inline-block size-2 rounded-full bg-slate-600" data-connection-dot></span>
-                <span data-connection-status>Sin conectar</span>
-            </p>
+            <div class="flex items-center gap-3 text-xs">
+                <p class="flex items-center gap-2 text-slate-400">
+                    <span class="inline-block size-2 rounded-full bg-slate-600" data-connection-dot></span>
+                    <span data-connection-status>Sin conectar</span>
+                </p>
+
+                <p class="rounded-md border border-slate-800 px-2 py-1 text-slate-300">
+                    @if ($isHost ?? false)
+                        <span class="font-medium text-amber-300">Subastador</span>
+                    @elseif ($viewer ?? null)
+                        <span data-viewer-name>{{ $viewer->name }}</span>
+                    @else
+                        <span class="text-slate-500">Sin identidad</span>
+                    @endif
+                </p>
+            </div>
         </header>
 
         <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-2 text-xs text-slate-400">

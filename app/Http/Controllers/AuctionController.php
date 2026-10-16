@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\OpenLotRequest;
+use App\Models\Participant;
 use App\Services\AuctionService;
 use App\Services\AuctionSnapshot;
 use App\Services\SessionIdentity;
@@ -20,25 +21,41 @@ class AuctionController extends Controller
     /**
      * Selector de rol: punto de entrada a la subasta en vivo.
      */
-    public function index(): View
+    public function index(Request $request): View
     {
-        return view('auction.index');
+        return view('auction.index', $this->identityData($request));
     }
 
     /**
      * Pantalla del subastador (emisor).
      */
-    public function emisor(): View
+    public function emisor(Request $request): View
     {
-        return view('auction.emisor');
+        return view('auction.emisor', $this->identityData($request));
     }
 
     /**
      * Pantalla del pujador (receptor).
      */
-    public function receptor(): View
+    public function receptor(Request $request): View
     {
-        return view('auction.receptor');
+        return view('auction.receptor', $this->identityData($request));
+    }
+
+    /**
+     * Identidad de la sesión para las vistas.
+     *
+     * El rol y el nombre se resuelven en el servidor: el HTML se arma según la
+     * sesión, así que no hay pantallas que el navegador pueda desbloquear.
+     *
+     * @return array{viewer: Participant|null, isHost: bool}
+     */
+    private function identityData(Request $request): array
+    {
+        return [
+            'viewer' => $this->identity->participant($request),
+            'isHost' => $this->identity->isHost($request),
+        ];
     }
 
     /**
