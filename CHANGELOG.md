@@ -2,6 +2,29 @@
 
 Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](https://keepachangelog.com/) y [SemVer](https://semver.org/).
 
+## [0.3.0] - 2026-10-16
+
+Hito 3: pujas y concurrencia.
+
+### Agregado
+
+- Esquema de pujas: `bids` y `auction_actions`, con la restricción única `(actor_key, action_id)` que sostiene la idempotencia; modelos `Bid` y `AuctionAction` con sus factories.
+- `App\Services\AuctionService::placeBid()`: transacción + `lockForUpdate` sobre la sala y el lote, puja mínima calculada por el servidor (igual al precio inicial en la primera puja y con el incremento después), saldo comprobado sin descontar, rechazo de la auto-puja y de pujas fuera de tiempo; `current_price_cents`, `leader_participant_id` y `version` cambian en la misma transacción.
+- `App\Support\Money`: formatea centavos sin aritmética de punto flotante.
+- `POST /auction/bids`: exige identidad (middleware `participant`), limita las pujas **por pujador** (`bids_per_second`) y es idempotente por `action_id`: reintentar devuelve la misma respuesta sin volver a pujar, incluso si fue un rechazo.
+- El bloque `bids` del snapshot público trae las últimas pujas del lote abierto (tope en `config/auction.php`), de la más nueva a la más vieja, con autor, monto y momento, sin ningún id interno.
+- UI del pujador: botón **Pujar** con la puja mínima que aplicaría el servidor (el cliente no manda monto), aviso **Ya vas ganando este lote**, lista de pujas en vivo y mensajes de error del servidor en el propio formulario.
+- Tests de concurrencia real (`tests/Feature/ConcurrencyTest.php`) contra PostgreSQL en la CI: el bloqueo serializa dos conexiones, cuatro pujas simultáneas no pierden actualizaciones, dos pujas del mismo monto dejan un solo ganador y el `action_id` duplicado concurrente se registra una sola vez.
+
+### Cambiado
+
+- La `actor_key` de la idempotencia es el participante (`participant:{id}`) y no el hash del id de sesión: el id de sesión se regenera al cambiar de identidad, y el participante es la identidad durable. `participants.session_id` sigue guardando el hash de la sesión que ata el navegador al participante.
+- La CI levanta un servicio PostgreSQL y corre los tests de concurrencia contra él; en SQLite esos tests se saltan con un motivo explícito.
+
+### Notas
+
+- La verificación manual con dos navegadores encontró dos bugs de UI que este hito corrige: el liderazgo se deduce del estado público del lote (el broadcast no lleva `me`) y el error de puja se limpia al cambiar de lote.
+
 ## [0.2.0] - 2026-10-16
 
 Hito 2: sala, lotes y estado compartido.
