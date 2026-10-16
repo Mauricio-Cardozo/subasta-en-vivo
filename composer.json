@@ -1,9 +1,9 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "mauricio-cardozo/subasta-en-vivo",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "description": "Subasta en vivo en tiempo real con Laravel 12, Reverb y Echo: subastador y pujadores sobre una sala compartida con chat.",
+    "keywords": ["laravel", "reverb", "echo", "websockets", "auction", "realtime"],
     "license": "MIT",
     "require": {
         "php": "^8.2",
