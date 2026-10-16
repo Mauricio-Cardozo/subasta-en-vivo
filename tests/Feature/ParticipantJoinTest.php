@@ -6,6 +6,7 @@ use App\Models\Participant;
 use App\Services\SessionIdentity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ParticipantJoinTest extends TestCase
@@ -64,9 +65,7 @@ class ParticipantJoinTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider invalidNames
-     */
+    #[DataProvider('invalidNames')]
     public function test_invalid_names_are_rejected(string $name): void
     {
         $this->postJson('/join', ['name' => $name])

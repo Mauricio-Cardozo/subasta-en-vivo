@@ -7,6 +7,7 @@ use Database\Factories\LotFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Un lote de la sala. Como máximo uno está `open` a la vez (RF-01).
@@ -75,6 +76,14 @@ class Lot extends Model
     public function winner(): BelongsTo
     {
         return $this->belongsTo(Participant::class, 'winner_participant_id');
+    }
+
+    /**
+     * @return HasMany<Bid, $this>
+     */
+    public function bids(): HasMany
+    {
+        return $this->hasMany(Bid::class);
     }
 
     public function isOpen(): bool

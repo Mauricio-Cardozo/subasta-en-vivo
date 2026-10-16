@@ -41,6 +41,14 @@ class Participant extends Model
     }
 
     /**
+     * @return HasMany<Bid, $this>
+     */
+    public function bids(): HasMany
+    {
+        return $this->hasMany(Bid::class);
+    }
+
+    /**
      * ¿Le alcanza el saldo para pujar este monto? (RF-05)
      */
     public function canAfford(int $amountCents): bool
