@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\ChatMessageDeleted;
 use App\Events\ChatMessagePosted;
 use App\Models\ChatMessage;
 use App\Models\Participant;
@@ -40,6 +41,44 @@ class ChatService
         ChatMessagePosted::dispatch($this->payload($message));
 
         return $message;
+    }
+
+    /**
+     * Historial de la sala: los últimos `chat.history` mensajes, en orden de
+     * llegada (`id` ascendente). Se pide por HTTP al cargar y al reconectar
+     * (RF-12), porque Reverb no garantiza lo que pasó mientras no había conexión.
+     *
+     * @return list<array{id: int, author_name: string, body: string, posted_at: string}>
+     */
+    public function history(): array
+    {
+        $room = $this->auction->room();
+
+        if ($room === null) {
+            return [];
+        }
+
+        return ChatMessage::query()
+            ->where('room_id', $room->id)
+            ->orderByDesc('id')
+            ->limit((int) config('auction.chat.history'))
+            ->get()
+            ->reverse()
+            ->map(fn (ChatMessage $message): array => $this->payload($message))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Borra un mensaje (autor o subastador). Físico: al recargar no vuelve.
+     */
+    public function delete(ChatMessage $message): void
+    {
+        $id = $message->id;
+
+        DB::transaction(fn () => $message->delete());
+
+        ChatMessageDeleted::dispatch($id);
     }
 
     /**

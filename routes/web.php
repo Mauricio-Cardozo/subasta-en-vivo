@@ -47,9 +47,15 @@ Route::post('/auction/bids', [BidController::class, 'store'])
 
 // Chat de la sala (RF-11): escribe el pujador o el subastador. La identidad se
 // comprueba en el controlador porque puede ser cualquiera de las dos.
+Route::get('/auction/chat', [ChatController::class, 'index'])->name('auction.chat.index');
+
 Route::post('/auction/chat', [ChatController::class, 'store'])
     ->middleware('throttle:chat-messages')
     ->name('auction.chat.store');
+
+// Moderación del chat: borra el autor o el subastador (RF-11).
+Route::delete('/auction/chat/{message}', [ChatController::class, 'destroy'])
+    ->name('auction.chat.destroy');
 
 // Emisor de eventos de prueba: solo se registra en local, así que en
 // producción la ruta no existe.
