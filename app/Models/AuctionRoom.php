@@ -53,6 +53,14 @@ class AuctionRoom extends Model
     }
 
     /**
+     * @return HasMany<ChatMessage, $this>
+     */
+    public function chatMessages(): HasMany
+    {
+        return $this->hasMany(ChatMessage::class, 'room_id');
+    }
+
+    /**
      * Lote abierto de la sala, si existe.
      */
     public function openLot(): ?Lot
