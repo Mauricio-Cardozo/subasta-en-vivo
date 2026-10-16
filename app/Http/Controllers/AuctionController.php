@@ -67,6 +67,10 @@ class AuctionController extends Controller
      */
     public function state(Request $request): JsonResponse
     {
+        // Cierre perezoso: si el lote ya venció, primero se liquida y el estado
+        // refleja el resultado (nunca se muestra un lote abierto ya vencido).
+        $this->auction->settleIfDue();
+
         $snapshot = new AuctionSnapshot($this->auction->room());
 
         return response()
