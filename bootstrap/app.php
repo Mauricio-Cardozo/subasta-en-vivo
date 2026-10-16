@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\AssignCorrelationId;
 use App\Http\Middleware\EnsureHost;
 use App\Http\Middleware\EnsureParticipant;
 use Illuminate\Foundation\Application;
@@ -14,6 +15,8 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->append(AssignCorrelationId::class);
+
         $middleware->alias([
             'host' => EnsureHost::class,
             'participant' => EnsureParticipant::class,
