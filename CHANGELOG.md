@@ -2,6 +2,25 @@
 
 Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](https://keepachangelog.com/) y [SemVer](https://semver.org/).
 
+## [0.5.0] - 2026-10-16
+
+Hito 5: chat de la sala.
+
+### Agregado
+
+- Esquema del chat: `chat_messages` (sala, autor opcional, copia del nombre y texto) con índice `(room_id, id)`; modelo `ChatMessage` con su factory y relaciones `AuctionRoom::chatMessages()` / `Participant::chatMessages()`.
+- `POST /auction/chat` (límite `chat-messages` por quien escribe): publican el pujador y el subastador. El servidor decide autor y firma (el subastador se firma con `chat.host_name`, que comparte literal con el nombre reservado); `ChatMessageRequest` recorta el texto y aplica el tope `chat.max_length`.
+- `App\Services\ChatService::post()`: persiste en una transacción y emite `ChatMessagePosted` (canal público `auction`) **después del commit**, con solo `id`, `author_name`, `body` y `posted_at`.
+- `GET /auction/chat` (público, `no-store`): los últimos `chat.history` mensajes en orden de llegada; es la fuente de verdad al cargar y al reconectar, porque Reverb no repite lo que pasó sin conexión.
+- `DELETE /auction/chat/{message}`: borra el autor o el subastador (moderación); físico, con `ChatMessageDeleted` tras el commit. Otro rol recibe 403 y un mensaje inexistente, 404.
+- UI del chat compartida por ambas pantallas (`partials/chat.blade.php` + `resources/js/chat.js`): historial por HTTP y mensajes en vivo, orden por `id`, render con `textContent`, botón **Borrar** para el autor y para el subastador, y errores del servidor en el propio panel.
+- Tests: `ChatSchemaTest`, `ChatEndpointTest` (identidad, publicación, evento, recorte, validación y límite), `ChatModerationTest` (historial, truncado, autor/subastador/otro/invitado, 404) y concurrencia del chat contra PostgreSQL (publicaciones concurrentes sin pérdida y en orden, doble borrado sin romper, borrado + publicación coherentes). Guardas del cliente para `chat.js`.
+
+### Notas
+
+- El chat **no** usa `version` ni `action_id`: no hay estado compartido que ordenar (se ordena por `id`) y publicar no necesita idempotencia (el texto lo elige la persona). La moderación es un borrado físico, así que al recargar no vuelve.
+- Verificación manual con dos navegadores (Reverb real): el pujador y el subastador publican y se ven en vivo sin recargar; el subastador ve el botón de borrar en todos los mensajes y el pujador solo en los propios; el borrado desaparece en ambas pantallas al instante y no vuelve tras recargar.
+
 ## [0.4.0] - 2026-10-16
 
 Hito 4: temporizador, cierre y anti-sniping.

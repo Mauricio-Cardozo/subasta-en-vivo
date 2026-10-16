@@ -78,9 +78,13 @@ navegador (/emisor, /receptor)              servidor                        clie
         │  POST /auction/lots (solo subastador) │  AuctionService + lockForUpdate│
         │  POST /auction/lots/close (subastador)│  closeCurrentLot + lockForUpdate│
         │  POST /auction/bids (solo pujador) ──►│  placeBid + lockForUpdate     │
+        │  POST /auction/chat (pujador o subastador)│  ChatService::post        │
+        │  GET /auction/chat (historial) ──────►│  ChatService::history         │
+        │  DELETE /auction/chat/{id} (moderar) ►│  ChatService::delete          │
 ```
 
 - `window.Echo.channel('auction').listen('.AuctionStateUpdated', …)` — un único listener por página (`resources/js/auction.js`).
+- El chat usa el mismo canal desde `resources/js/chat.js`: `.ChatMessagePosted` y `.ChatMessageDeleted`, y pide `GET /auction/chat` al cargar y al reconectar.
 - El estado inicial se pide por **HTTP** (`GET /auction/state`); al reconectar también. Reverb no reemplaza al endpoint.
 - El cliente ignora eventos con `version` menor o igual a la mostrada.
 - El indicador del encabezado refleja el estado real de la conexión (`En vivo`, `Conectando…`, `Reconectando…`, `Sin conexión`).
@@ -98,6 +102,12 @@ navegador (/emisor, /receptor)              servidor                        clie
 - El **temporizador** del panel se calcula con el `remaining_ms` del servidor (no con el reloj del navegador) y se reancla con cada estado; al llegar a cero pide el estado para que el servidor liquide el lote. El navegador nunca simula el cierre.
 - Una puja dentro de la **ventana final** corre el cierre (anti-sniping, con tope de extensiones); el panel lo refleja en el resumen del evento y en el contador reajustado.
 
+### Chat
+
+- Publican el **pujador** y el **subastador** (`POST /auction/chat`). El servidor decide autor y firma: el subastador se firma con `chat.host_name` porque no tiene fila de participante. El texto se recorta y se corta en `chat.max_length`.
+- En vivo por el mismo canal `auction`: `ChatMessagePosted` para lo nuevo y `ChatMessageDeleted` para lo borrado. El cliente pide `GET /auction/chat` al cargar y **al reconectar** (Reverb no repite lo que pasó sin conexión) y ordena por `id`.
+- **Moderar:** el subastador borra cualquier mensaje; el pujador, solo los suyos. El servidor lo vuelve a comprobar (el botón del cliente es solo cosmético) y el borrado es físico, así que no reaparece al recargar.
+
 ## Identidad
 
 No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**.
@@ -105,7 +115,7 @@ No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**
 - **Pujador:** `POST /join` con un nombre validado (longitud, caracteres, reservado `Subastador` y único sin distinguir mayúsculas) guarda un `participants` ligado a la sesión y le asigna el saldo virtual.
 - **Subastador:** `POST /host/login` compara el PIN de `AUCTION_HOST_PIN` en tiempo constante. Sin PIN configurado el acceso **siempre** falla. El rol queda en la sesión, nunca en el navegador.
 - El vínculo navegador↔participante se guarda hasheado (`sha256(id de sesión | app key)`) en `participants.session_id` y nunca viaja al cliente.
-- La clave de idempotencia (`actor_key`) es el **participante** (`participant:{id}`), no el hash de la sesión: el id de sesión se regenera al cambiar de identidad y el participante es la identidad durable. Para el subastador se usa la sesión.
+- La clave de idempotencia (`actor_key`) es el **participante** (`participant:{id}`), no el hash de la sesión: el id de sesión se regenera al cambiar de identidad y el participante es la identidad durable. Para el subastador, que no tiene fila de participante, se usa un token durable de la sesión (`host:{token}`).
 - Al cambiar de identidad (unirse o loguearse como subastador) la sesión se invalida: el navegador no arrastra privilegios del rol anterior.
 - Los middleware `participant` y `host` protegen las acciones; el servidor responde 403 sin el rol.
 
@@ -126,15 +136,15 @@ No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**
 ```
 app/
   Events/            # AuctionStateUpdated, ChatMessagePosted, ChatMessageDeleted
-  Http/Controllers/  # AuctionController, ParticipantController, HostAuthController, BidController (delgados)
+  Http/Controllers/  # AuctionController, ParticipantController, HostAuthController, BidController, ChatController (delgados)
   Http/Middleware/   # EnsureHost, EnsureParticipant
-  Http/Requests/     # JoinRequest, HostLoginRequest, OpenLotRequest, CloseLotRequest, PlaceBidRequest
-  Models/            # AuctionRoom, Lot, Participant, Bid, AuctionAction (+ ChatMessage en Hito 5)
-  Services/          # AuctionService, AuctionSnapshot, SessionIdentity, ActionIdempotency
+  Http/Requests/     # JoinRequest, HostLoginRequest, OpenLotRequest, CloseLotRequest, PlaceBidRequest, ChatMessageRequest
+  Models/            # AuctionRoom, Lot, Participant, Bid, AuctionAction, ChatMessage
+  Services/          # AuctionService, AuctionSnapshot, ChatService, SessionIdentity, ActionIdempotency
   Support/           # ActionResult, Money
 config/auction.php
-resources/views/auction/   # layout, emisor, receptor, partials/lot
-resources/js/              # auction.js (+ chat.js en Hito 5)
+resources/views/auction/   # layout, emisor, receptor, partials/lot, partials/chat
+resources/js/              # auction.js, chat.js
 tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 ```
 
@@ -145,7 +155,7 @@ tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 - [x] **Hito 2 — Sala, lotes y estado compartido:** esquema y balance, identidad (alta + PIN), apertura de lote bajo bloqueo y estado público por HTTP.
 - [x] **Hito 3 — Pujas y concurrencia:** esquema de pujas e idempotencia, `placeBid` bajo bloqueo, `POST /auction/bids`, pujas en el snapshot, UI de puja y tests de concurrencia real contra PostgreSQL.
 - [x] **Hito 4 — Temporizador, cierre y anti-sniping:** cierre por vencimiento con adjudicación y descuento de saldo, anti-sniping, cierre manual del subastador idempotente, temporizador y resultado en las pantallas, y tests de concurrencia del cierre.
-- [ ] **Hito 5 — Chat.**
+- [x] **Hito 5 — Chat:** esquema de mensajes; `POST /auction/chat` para pujador y subastador con `ChatMessagePosted` tras el commit; historial por `GET /auction/chat` y moderación por `DELETE` con `ChatMessageDeleted`; panel compartido en vivo (historial por HTTP al cargar y al reconectar) y tests de concurrencia del chat contra PostgreSQL.
 - [ ] **Hito 6 — Logging y trazabilidad.**
 - [ ] **Hito 7 — Pulido y entrega.**
 
