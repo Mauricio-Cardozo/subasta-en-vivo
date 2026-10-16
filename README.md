@@ -1,5 +1,7 @@
 # Subasta en Vivo
 
+[![CI](https://github.com/Mauricio-Cardozo/subasta-en-vivo/actions/workflows/ci.yml/badge.svg)](https://github.com/Mauricio-Cardozo/subasta-en-vivo/actions/workflows/ci.yml)
+
 Subasta en vivo para varias personas con roles asimétricos sobre una **sala compartida**. Un subastador publica lotes y los pujadores compiten por ellos. Todos ven el precio, el temporizador y el chat en tiempo real.
 
 | Rol | Pantalla | Qué hace |
@@ -52,6 +54,24 @@ php artisan test           # tests
 
 La CI de GitHub Actions corre ambos (más `npm run build`) en cada PR y bloquea el merge en `main` si fallan.
 
+## Flujo en tiempo real (estado actual)
+
+```
+navegador (/emisor, /receptor)          servidor                         clientes
+        │                                   │                               │
+        │  GET /emisor | /receptor ────────►│  Blade + auction.js           │
+        │◄──────────────────────────────────│                               │
+        │  Echo: channel('auction')         │                               │
+        │◄──── WebSocket (Reverb :8080) ────│◄── AuctionStateUpdated ───────│
+        │  dibuja snapshot (textContent)    │     (solo tras el commit)     │
+```
+
+- `window.Echo.channel('auction').listen('.AuctionStateUpdated', …)` — un único listener por página (`resources/js/auction.js`).
+- El cliente ignora eventos con `version` menor o igual a la mostrada.
+- El indicador del encabezado refleja el estado real de la conexión (`En vivo`, `Conectando…`, `Reconectando…`, `Sin conexión`).
+- En `APP_ENV=local` aparece el botón **Emitir evento de prueba**, que llama a `POST /dev/broadcast` (ruta que no existe en otros entornos).
+- Todavía no hay estado persistido: la sala, los lotes y las pujas llegan en el Hito 2 y 3.
+
 ## Arquitectura (resumen)
 
 - Toda acción que modifica estado es atómica: transacción + `lockForUpdate` sobre la fila de la sala (`auction_rooms`), con un único orden de bloqueo.
@@ -80,7 +100,7 @@ tests/Feature/, tests/Unit/
 ## Hitos
 
 - [x] **Hito 0 — Preparación:** repo, Laravel 12 + Reverb + Echo + Vite, Pint, CI.
-- [ ] **Hito 1 — Dos pantallas conectadas:** `/emisor` y `/receptor` con un evento de prueba.
+- [x] **Hito 1 — Dos pantallas conectadas:** `/emisor` y `/receptor` con un evento de prueba.
 - [ ] **Hito 2 — Sala, lotes y estado compartido.**
 - [ ] **Hito 3 — Pujas y concurrencia** (tests contra MySQL/PostgreSQL).
 - [ ] **Hito 4 — Temporizador, cierre y anti-sniping.**
