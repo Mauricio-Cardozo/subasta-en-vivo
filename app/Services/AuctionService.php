@@ -36,6 +36,11 @@ class AuctionService
         return DB::transaction(function () use ($title, $description, $startPriceCents, $minIncrementCents, $durationSeconds): ActionResult {
             $room = $this->lockRoom();
 
+            // Cierre perezoso: si el lote anterior ya venció, se liquida antes de
+            // decidir si se puede abrir otro (no hay cron; el vencimiento se
+            // resuelve dentro de cada acción).
+            $this->closeLotIfDue($room);
+
             if ($this->hasOpenLot($room)) {
                 return ActionResult::rejected(
                     'lot_already_open',
@@ -94,6 +99,11 @@ class AuctionService
     {
         return DB::transaction(function () use ($participant, $amountCents): ActionResult {
             $room = $this->lockRoom();
+
+            // Cierre perezoso: la puja que llega tarde no se acepta, pero sí
+            // liquida el lote para que todos vean el resultado.
+            $this->closeLotIfDue($room);
+
             $lot = $this->lockCurrentLot($room);
 
             if (! $lot instanceof Lot) {
@@ -101,11 +111,11 @@ class AuctionService
             }
 
             if (! $lot->isOpen()) {
-                return ActionResult::rejected('lot_closed', 'El lote ya está cerrado.');
-            }
-
-            if ($lot->ends_at->isPast()) {
-                return ActionResult::rejected('lot_expired', 'Se terminó el tiempo del lote.');
+                // Si venció, para el pujador el motivo es el tiempo; si lo cerró
+                // el subastador, es que el lote ya no está abierto.
+                return $lot->ends_at->isPast()
+                    ? ActionResult::rejected('lot_expired', 'Se terminó el tiempo del lote.')
+                    : ActionResult::rejected('lot_closed', 'El lote ya está cerrado.');
             }
 
             if ($lot->leader_participant_id === $participant->id) {
@@ -171,6 +181,116 @@ class AuctionService
         return $lot->current_price_cents === null
             ? $lot->start_price_cents
             : $lot->current_price_cents + $lot->min_increment_cents;
+    }
+
+    /**
+     * Cierra el lote abierto ahora mismo, a pedido del subastador (RF-03).
+     *
+     * Comparte el desenlace con el cierre por vencimiento: con ganador queda
+     * `sold` y se le descuenta el saldo; sin pujas, `unsold`.
+     */
+    public function closeCurrentLot(): ActionResult
+    {
+        return DB::transaction(function (): ActionResult {
+            $room = $this->lockRoom();
+            $lot = $this->lockCurrentLot($room);
+
+            if (! $lot instanceof Lot || ! $lot->isOpen()) {
+                return ActionResult::rejected('no_open_lot', 'No hay ningún lote abierto.');
+            }
+
+            $this->settle($room, $lot);
+
+            $closed = $room->currentLot;
+
+            return ActionResult::success([
+                'lot_id' => $closed->id,
+                'status' => $closed->status->value,
+                'winner_name' => $closed->winner?->name,
+                'price_cents' => $closed->current_price_cents,
+                'version' => $room->version,
+            ]);
+        });
+    }
+
+    /**
+     * Cierre perezoso desde la lectura de estado (RF-09).
+     *
+     * Se hace una comprobación barata sin bloquear; solo si de verdad hay un
+     * lote vencido sin cerrar se abre la transacción que lo liquida. Así el
+     * `GET /auction/state` no paga un `lockForUpdate` en cada petición.
+     */
+    public function settleIfDue(): void
+    {
+        $lot = $this->room()?->currentLot;
+
+        if (! $lot instanceof Lot || ! $lot->isOpen() || ! $lot->ends_at->isPast()) {
+            return;
+        }
+
+        DB::transaction(function (): void {
+            $this->closeLotIfDue($this->lockRoom());
+        });
+    }
+
+    /**
+     * Cierra el lote de la sala si su plazo ya venció (idempotente).
+     *
+     * Espera la sala **ya bloqueada**: forma parte de la misma transacción que
+     * la acción que lo dispara, así el cierre y esa acción son una sola
+     * transición de versión.
+     */
+    private function closeLotIfDue(AuctionRoom $room): ?Lot
+    {
+        $lot = $this->lockCurrentLot($room);
+
+        if (! $lot instanceof Lot || ! $lot->isOpen() || ! $lot->ends_at->isPast()) {
+            return null;
+        }
+
+        return $this->settle($room, $lot);
+    }
+
+    /**
+     * Liquida un lote abierto: decide ganador, descuenta saldo y sube la versión
+     * una sola vez (RF-05). Espera la sala y el lote bloqueados.
+     */
+    private function settle(AuctionRoom $room, Lot $lot): Lot
+    {
+        $leader = $lot->leader;
+        $price = $lot->current_price_cents;
+
+        if ($leader instanceof Participant && $price !== null) {
+            // El descuento ocurre acá, no al pujar (4.1): el saldo ya se validó
+            // contra el monto, así que no puede quedar negativo.
+            $leader->forceFill(['balance_cents' => $leader->balance_cents - $price])->save();
+
+            $lot->forceFill([
+                'status' => LotStatus::Sold,
+                'winner_participant_id' => $leader->id,
+                'closed_at' => now(),
+            ])->save();
+
+            $summary = "Se cerró el lote «{$lot->title}»: lo ganó {$leader->name} por ".Money::format($price);
+        } else {
+            $lot->forceFill([
+                'status' => LotStatus::Unsold,
+                'closed_at' => now(),
+            ])->save();
+
+            $summary = "Se cerró el lote «{$lot->title}» sin pujas";
+        }
+
+        $room->forceFill(['version' => $room->version + 1])->save();
+        $room->load('currentLot.leader', 'currentLot.winner');
+
+        AuctionStateUpdated::dispatch(
+            (new AuctionSnapshot($room))->build(
+                action: ['type' => 'lot_closed', 'summary' => $summary],
+            )
+        );
+
+        return $lot;
     }
 
     /**
