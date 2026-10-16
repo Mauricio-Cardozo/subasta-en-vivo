@@ -71,4 +71,9 @@ return [
         // Pujas incluidas en el snapshot público (RF-10).
         'bids' => 10,
     ],
+
+    'audit' => [
+        // Canal de log donde quedan las acciones (canales JSON, trazabilidad).
+        'channel' => env('AUDIT_LOG_CHANNEL', 'audit'),
+    ],
 ];

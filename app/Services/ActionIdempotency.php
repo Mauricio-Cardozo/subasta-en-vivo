@@ -19,6 +19,8 @@ use Throwable;
  */
 class ActionIdempotency
 {
+    public function __construct(private readonly AuditLogger $audit) {}
+
     /**
      * Ejecuta la acción una sola vez por `(actor_key, action_id)`.
      *
@@ -26,20 +28,28 @@ class ActionIdempotency
      * negocio también se guardan y se repiten (mismo motivo, mismo código).
      * Un error inesperado no deja la acción reclamada.
      *
+     * Con `$event` se audita el resultado (aceptada, rechazada, repetida o en
+     * curso) una sola vez por camino: un reintento no se cuenta como una acción
+     * nueva.
+     *
      * @param  Closure(): ActionResult  $action
      */
-    public function run(string $actorKey, string $actionId, Closure $action): JsonResponse
+    public function run(string $actorKey, string $actionId, Closure $action, ?string $event = null): JsonResponse
     {
         // Camino normal de un reintento: la acción ya está registrada.
         $existing = $this->find($actorKey, $actionId);
 
         if ($existing instanceof AuctionAction) {
+            $this->audited($event, $actorKey, $actionId, is_array($existing->result) ? 'replayed' : 'in_progress');
+
             return $this->replay($existing);
         }
 
         $claim = $this->claim($actorKey, $actionId);
 
         if ($claim instanceof JsonResponse) {
+            $this->audited($event, $actorKey, $actionId, 'in_progress');
+
             return $claim;
         }
 
@@ -60,7 +70,29 @@ class ActionIdempotency
 
         $claim->update(['result' => ['status' => $status, 'body' => $body]]);
 
+        $this->audited($event, $actorKey, $actionId, $result->ok ? 'accepted' : 'rejected', [
+            'reason' => $result->reason,
+            'result' => $result->context,
+        ]);
+
         return response()->json($body, $status);
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function audited(?string $event, string $actorKey, string $actionId, string $outcome, array $context = []): void
+    {
+        if ($event === null) {
+            return;
+        }
+
+        $this->audit->record($event, [
+            'actor_key' => $actorKey,
+            'action_id' => $actionId,
+            'outcome' => $outcome,
+            ...$context,
+        ]);
     }
 
     /**

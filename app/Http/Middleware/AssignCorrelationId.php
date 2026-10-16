@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Support\CorrelationId;
+use App\Support\RequestContext;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -14,7 +15,7 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * Toma `X-Correlation-ID` si viene con un valor seguro (o genera un UUID), lo
  * publica como contexto compartido de log —así todo registro lo lleva, en
- * cualquier canal—, lo deja en `CorrelationId` y lo devuelve en la respuesta
+ * cualquier canal—, lo deja en `RequestContext` y lo devuelve en la respuesta
  * para que el cliente pueda citarlo en un reporte.
  */
 class AssignCorrelationId
@@ -24,7 +25,10 @@ class AssignCorrelationId
     /** Sin espacios ni saltos de línea: el valor no debe inyectar en los logs. */
     private const PATTERN = '/^[A-Za-z0-9._-]{1,64}$/';
 
-    public function __construct(private readonly CorrelationId $correlation) {}
+    public function __construct(
+        private readonly CorrelationId $correlation,
+        private readonly RequestContext $context,
+    ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -34,6 +38,9 @@ class AssignCorrelationId
             : (string) Str::uuid();
 
         $this->correlation->set($id);
+        $this->context->correlationId = $id;
+        $this->context->ip = $request->ip();
+
         Log::shareContext(['correlation_id' => $id]);
 
         $response = $next($request);
