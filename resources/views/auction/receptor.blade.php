@@ -36,6 +36,32 @@
                     Saldo virtual para pujar; el servidor lo descuenta cuando ganás un lote.
                 </p>
             </section>
+
+            @if ($viewer ?? null)
+                {{--
+                    El formulario existe porque la sesión ya tiene un nombre. El JS solo lo
+                    muestra cuando hay un lote abierto y no sos el líder, y manda únicamente
+                    un `action_id`: la puja efectiva la calcula el servidor (RF-04).
+                --}}
+                <section data-bid-section hidden class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+                    <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Puja</h2>
+                    <p class="mt-1 text-sm text-slate-500">
+                        El botón pone la puja mínima que saldría del servidor; el monto no lo
+                        elige tu navegador.
+                    </p>
+
+                    <form data-bid class="mt-4 grid gap-3 text-sm">
+                        <p class="font-mono text-2xl font-semibold text-amber-300" data-bid-minimum>—</p>
+
+                        <p data-form-error hidden class="rounded-md border border-rose-800 bg-rose-950/40 px-3 py-2 text-rose-300"></p>
+
+                        <button type="submit"
+                                class="justify-self-start rounded-md bg-amber-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-amber-400 disabled:opacity-50">
+                            Pujar
+                        </button>
+                    </form>
+                </section>
+            @endif
         </div>
 
         <div class="grid gap-6">
