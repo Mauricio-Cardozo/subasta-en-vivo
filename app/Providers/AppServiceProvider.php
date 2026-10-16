@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\SessionIdentity;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -28,9 +29,10 @@ class AppServiceProvider extends ServiceProvider
     /**
      * Límites de peticiones del servidor (RNF-06).
      *
-     * Los topes salen del balance (config/auction.php) y se aplican por IP: el
-     * id de sesión se puede rotar, la IP no. El límite de PIN es el más estricto
-     * porque es la única credencial del MVP.
+     * Los topes salen del balance (config/auction.php). Los límites de entrada
+     * (alta y PIN) se aplican por IP, que no se puede rotar. Las pujas se
+     * limitan por pujador (la misma persona detrás de una IP compartida no se
+     * bloquea entre sí) y caen a la IP si todavía no hay identidad.
      */
     private function configureRateLimiting(): void
     {
@@ -45,5 +47,12 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('lot-opens', fn (Request $request) => Limit::perMinute(
             config('auction.limits.lot_opens_per_minute')
         )->by($request->ip()));
+
+        RateLimiter::for('bids', function (Request $request) {
+            $participant = $request->session()->get(SessionIdentity::PARTICIPANT_KEY);
+
+            return Limit::perSecond(config('auction.limits.bids_per_second'))
+                ->by($participant === null ? 'ip:'.$request->ip() : 'participant:'.$participant);
+        });
     }
 }

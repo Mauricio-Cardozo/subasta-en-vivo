@@ -15,7 +15,7 @@ use Illuminate\Http\Request;
  */
 class SessionIdentity
 {
-    private const PARTICIPANT_KEY = 'participant_id';
+    public const PARTICIPANT_KEY = 'participant_id';
 
     private const HOST_KEY = 'is_host';
 
@@ -25,6 +25,28 @@ class SessionIdentity
     public function hash(Request $request): string
     {
         return hash('sha256', $request->session()->getId().'|'.config('app.key'));
+    }
+
+    /**
+     * Clave del actor para la idempotencia de acciones (4.7).
+     *
+     * Es el participante, no el id de sesión: el id de sesión se regenera al
+     * cambiar de identidad (y Laravel lo rota en otras situaciones), mientras
+     * que el participante es la identidad durable. Así, reintentar una acción
+     * desde la misma persona devuelve siempre el mismo resultado. Para el
+     * subastador, que no tiene fila de participante, se usa la sesión.
+     */
+    public function actorKey(Request $request): string
+    {
+        $participant = $this->participant($request);
+
+        if ($participant !== null) {
+            return 'participant:'.$participant->id;
+        }
+
+        $prefix = $this->isHost($request) ? 'host' : 'session';
+
+        return $prefix.':'.$this->hash($request);
     }
 
     /**
