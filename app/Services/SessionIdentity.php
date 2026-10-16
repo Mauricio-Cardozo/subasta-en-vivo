@@ -1,0 +1,88 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Participant;
+use Illuminate\Http\Request;
+
+/**
+ * Identidad derivada de la sesión del servidor (5.5).
+ *
+ * El navegador nunca decide quién es: manda un nombre (dato de cliente) y el
+ * servidor lo asocia a la sesión. `session_id` guarda un hash del id de sesión
+ * (pseudonimizado) y es la misma clave que después se usará como `actor_key`
+ * para la idempotencia de las acciones (4.7).
+ */
+class SessionIdentity
+{
+    private const PARTICIPANT_KEY = 'participant_id';
+
+    private const HOST_KEY = 'is_host';
+
+    /**
+     * Hash estable y no reversible del id de sesión actual.
+     */
+    public function hash(Request $request): string
+    {
+        return hash('sha256', $request->session()->getId().'|'.config('app.key'));
+    }
+
+    /**
+     * Participante de la sesión actual, si ya se unió con un nombre.
+     */
+    public function participant(Request $request): ?Participant
+    {
+        $id = $request->session()->get(self::PARTICIPANT_KEY);
+
+        if ($id === null) {
+            return null;
+        }
+
+        /** @var Participant|null $participant */
+        $participant = Participant::query()->find($id);
+
+        return $participant;
+    }
+
+    public function isHost(Request $request): bool
+    {
+        return $request->session()->get(self::HOST_KEY) === true;
+    }
+
+    /**
+     * Invalida la sesión actual y arranca una nueva, sin datos previos.
+     *
+     * Se llama al cambiar de identidad: el navegador nunca arrastra
+     * privilegios de la identidad anterior. Debe ejecutarse **antes** de
+     * calcular {@see hash()}, porque el id de sesión cambia.
+     */
+    public function renew(Request $request): void
+    {
+        $request->session()->invalidate();
+    }
+
+    /**
+     * Asocia la sesión actual (ya renovada) con el participante.
+     */
+    public function attachParticipant(Request $request, Participant $participant): void
+    {
+        $request->session()->put(self::PARTICIPANT_KEY, $participant->id);
+    }
+
+    /**
+     * Marca la sesión como subastador.
+     *
+     * El subastador es una identidad distinta: al iniciar sesión se descarta la
+     * identidad de pujador que hubiera en la sesión (5.5).
+     */
+    public function markHost(Request $request): void
+    {
+        $this->renew($request);
+        $request->session()->put(self::HOST_KEY, true);
+    }
+
+    public function forgetHost(Request $request): void
+    {
+        $request->session()->forget(self::HOST_KEY);
+    }
+}
