@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Subasta') · {{ config('app.name') }}</title>
-    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    @vite(['resources/css/app.css', 'resources/js/auction.js'])
 </head>
 <body class="h-full bg-slate-950 text-slate-100 antialiased">
     <div class="mx-auto flex min-h-full max-w-5xl flex-col gap-6 p-4 sm:p-6">
@@ -49,6 +49,20 @@
         <main class="flex-1">
             @yield('content')
         </main>
+
+        @if (app()->environment('local'))
+            <section class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-amber-700/60 bg-amber-950/20 px-4 py-3 text-xs text-amber-200">
+                <p>
+                    <strong class="uppercase tracking-wide">Solo desarrollo</strong>
+                    — emite un evento <code>AuctionStateUpdated</code> desde el servidor para comprobar Reverb + Echo.
+                </p>
+                <button type="button"
+                        data-dev-broadcast
+                        class="rounded-md border border-amber-600/60 bg-amber-900/40 px-3 py-1.5 font-medium text-amber-100 transition hover:bg-amber-900 disabled:opacity-50">
+                    Emitir evento de prueba
+                </button>
+            </section>
+        @endif
 
         <footer class="border-t border-slate-800 pt-4 text-xs text-slate-500">
             El servidor es la única autoridad: el navegador solo pide acciones y dibuja el estado recibido.
