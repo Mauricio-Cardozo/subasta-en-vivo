@@ -6,9 +6,11 @@ use App\Enums\LotStatus;
 use App\Models\AuctionAction;
 use App\Models\AuctionRoom;
 use App\Models\Bid;
+use App\Models\ChatMessage;
 use App\Models\Lot;
 use App\Models\Participant;
 use App\Services\AuctionService;
+use App\Services\ChatService;
 use Closure;
 use Illuminate\Database\Connection;
 use Illuminate\Database\QueryException;
@@ -133,6 +135,40 @@ class ConcurrencyTest extends TestCase
             } catch (QueryException) {
                 return ['ok' => false];
             }
+        };
+    }
+
+    /**
+     * Tarea que publica un mensaje de chat desde otro proceso.
+     */
+    private function postMessageTask(int $participantId, string $body): Closure
+    {
+        return function () use ($participantId, $body): array {
+            $participant = Participant::query()->findOrFail($participantId);
+            $message = app(ChatService::class)->post($participant, $participant->name, $body);
+
+            return ['id' => $message->id];
+        };
+    }
+
+    /**
+     * Tarea que borra un mensaje (moderación) desde otro proceso.
+     *
+     * Tolerante a que el mensaje ya no esté: dos borrados del mismo id no deben
+     * romper (el segundo ve la fila ausente y no hay efecto que duplicar).
+     */
+    private function deleteMessageTask(int $messageId): Closure
+    {
+        return function () use ($messageId): array {
+            $message = ChatMessage::query()->find($messageId);
+
+            if ($message === null) {
+                return ['ok' => false, 'reason' => 'not_found'];
+            }
+
+            app(ChatService::class)->delete($message);
+
+            return ['ok' => true];
         };
     }
 
@@ -333,6 +369,89 @@ class ConcurrencyTest extends TestCase
 
         $this->assertSame(1, count(array_filter($results, fn (array $result): bool => $result['ok'])));
         $this->assertSame(1, AuctionAction::query()->count());
+    }
+
+    public function test_concurrent_messages_are_all_kept_and_ordered_by_id(): void
+    {
+        AuctionRoom::factory()->create();
+
+        $senders = Participant::factory()->count(5)->create();
+
+        $results = array_values(Concurrency::run(
+            $senders->map(
+                fn (Participant $participant, int $index) => $this->postMessageTask($participant->id, "Mensaje {$index}")
+            )->all()
+        ));
+
+        // Nadie se pierde: cinco publicaciones, cinco filas.
+        $this->assertSame(5, ChatMessage::query()->count());
+        $this->assertCount(5, array_filter($results, fn (array $result): bool => isset($result['id'])));
+
+        // El historial sale en orden estable por `id`, sin importar el orden en
+        // que los procesos confirmaron (el chat no usa `version`).
+        $ids = array_column(app(ChatService::class)->history(), 'id');
+
+        $this->assertSame(array_values(array_unique($ids)), $ids, 'No puede repetirse un id.');
+        $sorted = $ids;
+        sort($sorted);
+        $this->assertSame($sorted, $ids, 'El historial debe venir ordenado por id.');
+    }
+
+    public function test_two_concurrent_deletes_of_the_same_message_remove_it_once(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $author = Participant::factory()->create();
+        $message = ChatMessage::factory()->create([
+            'room_id' => $room->id,
+            'participant_id' => $author->id,
+            'author_name' => $author->name,
+        ]);
+
+        $results = array_values(Concurrency::run([
+            $this->deleteMessageTask($message->id),
+            $this->deleteMessageTask($message->id),
+        ]));
+
+        // Ninguno rompe y el efecto es único: la fila no queda (repita o no la
+        // operación, el resultado es el mismo).
+        $this->assertCount(2, $results);
+        $this->assertGreaterThanOrEqual(1, count(array_filter($results, fn (array $result): bool => $result['ok'])));
+        $this->assertSame(0, ChatMessage::query()->count());
+    }
+
+    public function test_a_host_delete_and_a_concurrent_post_leave_a_consistent_history(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $author = Participant::factory()->create();
+        $target = ChatMessage::factory()->create([
+            'room_id' => $room->id,
+            'participant_id' => $author->id,
+            'author_name' => $author->name,
+            'body' => 'Fuera de tono',
+        ]);
+
+        $results = Concurrency::run([
+            'delete' => $this->deleteMessageTask($target->id),
+            'post' => $this->postMessageTask($author->id, 'Mensaje nuevo'),
+        ]);
+
+        $this->assertTrue($results['delete']['ok']);
+        $this->assertNotNull($results['post']['id']);
+
+        // El borrado no se lleva el mensaje nuevo: queda uno solo, y el
+        // historial sale coherente y ordenado.
+        $this->assertSame(1, ChatMessage::query()->count());
+
+        $history = app(ChatService::class)->history();
+        $bodies = array_column($history, 'body');
+
+        $this->assertContains('Mensaje nuevo', $bodies);
+        $this->assertNotContains('Fuera de tono', $bodies);
+
+        $ids = array_column($history, 'id');
+        $sorted = $ids;
+        sort($sorted);
+        $this->assertSame($sorted, $ids);
     }
 
     private function setShortLockTimeout(Connection $connection): void
