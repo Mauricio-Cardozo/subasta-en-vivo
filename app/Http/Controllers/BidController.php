@@ -33,6 +33,7 @@ class BidController extends Controller
             $this->identity->actorKey($request),
             $request->string('action_id')->toString(),
             fn (): ActionResult => $this->auction->placeBid($participant, $request->amountCents()),
+            event: 'auction.bid',
         );
     }
 }

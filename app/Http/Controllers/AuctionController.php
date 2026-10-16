@@ -8,6 +8,7 @@ use App\Models\Participant;
 use App\Services\ActionIdempotency;
 use App\Services\AuctionService;
 use App\Services\AuctionSnapshot;
+use App\Services\AuditLogger;
 use App\Services\SessionIdentity;
 use App\Support\ActionResult;
 use Illuminate\Contracts\View\View;
@@ -20,6 +21,7 @@ class AuctionController extends Controller
         private readonly AuctionService $auction,
         private readonly SessionIdentity $identity,
         private readonly ActionIdempotency $idempotency,
+        private readonly AuditLogger $audit,
     ) {}
 
     /**
@@ -98,6 +100,13 @@ class AuctionController extends Controller
             durationSeconds: $request->durationSeconds(),
         );
 
+        $this->audit->record('auction.lot_open', [
+            'actor_key' => $this->identity->actorKey($request),
+            'outcome' => $result->ok ? 'accepted' : 'rejected',
+            'reason' => $result->reason,
+            'result' => $result->context,
+        ]);
+
         if (! $result->ok) {
             return response()->json([
                 'reason' => $result->reason,
@@ -120,6 +129,7 @@ class AuctionController extends Controller
             $this->identity->actorKey($request),
             $request->string('action_id')->toString(),
             fn (): ActionResult => $this->auction->closeCurrentLot(),
+            event: 'auction.lot_close',
         );
     }
 }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\ChatMessageRequest;
 use App\Models\ChatMessage;
+use App\Services\AuditLogger;
 use App\Services\ChatService;
 use App\Services\SessionIdentity;
 use Illuminate\Http\JsonResponse;
@@ -22,6 +23,7 @@ class ChatController extends Controller
     public function __construct(
         private readonly ChatService $chat,
         private readonly SessionIdentity $identity,
+        private readonly AuditLogger $audit,
     ) {}
 
     /**
@@ -42,17 +44,31 @@ class ChatController extends Controller
         $participant = $this->identity->participant($request);
 
         if ($participant === null && ! $this->identity->isHost($request)) {
+            $this->audit->record('chat.post_denied', [
+                'actor_key' => $this->identity->actorKey($request),
+                'outcome' => 'rejected',
+                'reason' => 'unauthenticated',
+            ]);
+
             return response()->json([
                 'reason' => 'unauthenticated',
                 'message' => 'Necesitás un nombre o ser el subastador para escribir en el chat.',
             ], 403);
         }
 
+        $actorKey = $this->identity->actorKey($request);
+
         $message = $this->chat->post(
             $participant,
             $participant?->name ?? (string) config('auction.chat.host_name'),
             (string) $request->validated('body'),
         );
+
+        $this->audit->record('chat.posted', [
+            'actor_key' => $actorKey,
+            'outcome' => 'accepted',
+            'message_id' => $message->id,
+        ]);
 
         return response()->json($this->chat->payload($message), 201);
     }
@@ -68,6 +84,13 @@ class ChatController extends Controller
         $isAuthor = $participant !== null && $message->participant_id === $participant->id;
 
         if (! $isHost && ! $isAuthor) {
+            $this->audit->record('chat.delete_denied', [
+                'actor_key' => $this->identity->actorKey($request),
+                'outcome' => 'rejected',
+                'reason' => 'forbidden',
+                'message_id' => $message->id,
+            ]);
+
             return response()->json([
                 'reason' => 'forbidden',
                 'message' => 'Solo el autor o el subastador pueden borrar este mensaje.',
@@ -75,6 +98,12 @@ class ChatController extends Controller
         }
 
         $this->chat->delete($message);
+
+        $this->audit->record('chat.deleted', [
+            'actor_key' => $this->identity->actorKey($request),
+            'outcome' => 'accepted',
+            'message_id' => $message->id,
+        ]);
 
         return response()->noContent();
     }

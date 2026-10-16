@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Services\SessionIdentity;
 use App\Support\CorrelationId;
+use App\Support\RequestContext;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -16,9 +17,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Un `correlation_id` por petición: el middleware lo fija y los logs lo
-        // comparten.
+        // Estado por petición: el `correlation_id` y la IP que comparten el
+        // middleware, la auditoría y los logs.
         $this->app->singleton(CorrelationId::class);
+        $this->app->singleton(RequestContext::class);
     }
 
     /**

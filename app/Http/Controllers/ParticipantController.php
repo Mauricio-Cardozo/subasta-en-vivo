@@ -4,12 +4,16 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\JoinRequest;
 use App\Models\Participant;
+use App\Services\AuditLogger;
 use App\Services\SessionIdentity;
 use Illuminate\Http\JsonResponse;
 
 class ParticipantController extends Controller
 {
-    public function __construct(private readonly SessionIdentity $identity) {}
+    public function __construct(
+        private readonly SessionIdentity $identity,
+        private readonly AuditLogger $audit,
+    ) {}
 
     /**
      * Alta de un pujador: crea el participante con el saldo inicial y lo
@@ -28,6 +32,12 @@ class ParticipantController extends Controller
         ]);
 
         $this->identity->attachParticipant($request, $participant);
+
+        $this->audit->record('identity.joined', [
+            'actor_key' => 'participant:'.$participant->id,
+            'participant_id' => $participant->id,
+            'name' => $participant->name,
+        ]);
 
         return response()->json([
             'participant' => [
