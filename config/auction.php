@@ -50,6 +50,7 @@ return [
         'bids_per_second' => 3,
         'chat_messages_per_second' => 1,
         'lot_opens_per_minute' => 10,
+        'lot_closes_per_minute' => 10,
         // Altas de pujador y intentos de PIN por minuto.
         'join_per_minute' => 10,
         'host_login_per_minute' => 6,
