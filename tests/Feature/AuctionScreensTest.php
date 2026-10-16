@@ -2,16 +2,35 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuctionRoom;
+use App\Models\Lot;
+use App\Models\Participant;
+use Database\Seeders\AuctionRoomSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class AuctionScreensTest extends TestCase
 {
+    use RefreshDatabase;
+
     protected function setUp(): void
     {
         parent::setUp();
 
         // Los tests no dependen de `npm run build`: sin Vite no hay manifest.
         $this->withoutVite();
+        $this->seed(AuctionRoomSeeder::class);
+        config()->set('auction.host_pin', 'pin-secreto');
+    }
+
+    private function asHost(): void
+    {
+        $this->postJson('/host/login', ['pin' => 'pin-secreto'])->assertOk();
+    }
+
+    private function asParticipant(string $name = 'Ana'): void
+    {
+        $this->postJson('/join', ['name' => $name])->assertCreated();
     }
 
     public function test_index_screen_lists_both_roles(): void
@@ -25,22 +44,52 @@ class AuctionScreensTest extends TestCase
             ->assertSee(route('auction.receptor'), escape: false);
     }
 
-    public function test_emisor_screen_renders_for_the_host_role(): void
+    public function test_the_host_sees_the_open_lot_form_and_no_pin_form(): void
     {
+        $this->asHost();
+
         $this->get('/emisor')
             ->assertOk()
             ->assertViewIs('auction.emisor')
             ->assertSee('Abrir lote')
-            ->assertSee('data-lot-countdown', escape: false);
+            ->assertSee('data-open-lot', escape: false)
+            ->assertDontSee('data-host-login', escape: false)
+            ->assertSee('data-lot-ends', escape: false);
     }
 
-    public function test_receptor_screen_renders_for_the_bidder_role(): void
+    public function test_without_the_role_the_host_screen_asks_for_the_pin(): void
+    {
+        $this->get('/emisor')
+            ->assertOk()
+            ->assertSee('data-host-login', escape: false)
+            ->assertDontSee('data-open-lot', escape: false);
+    }
+
+    public function test_the_bidder_screen_asks_for_a_name_until_the_session_has_one(): void
     {
         $this->get('/receptor')
             ->assertOk()
             ->assertViewIs('auction.receptor')
-            ->assertSee('Lote activo')
+            ->assertSee('data-join', escape: false)
             ->assertSee('data-balance', escape: false);
+
+        $this->asParticipant();
+
+        $this->get('/receptor')
+            ->assertOk()
+            ->assertDontSee('data-join', escape: false)
+            ->assertSee('Ana');
+    }
+
+    public function test_the_screens_carry_the_state_hooks_the_client_uses(): void
+    {
+        foreach (['/emisor', '/receptor'] as $uri) {
+            $response = $this->get($uri)->assertOk();
+
+            foreach (['data-lot-panel', 'data-lot-title', 'data-lot-price', 'data-lot-leader', 'data-state-version'] as $hook) {
+                $response->assertSee($hook, escape: false);
+            }
+        }
     }
 
     public function test_both_screens_share_the_layout_and_navigation(): void
@@ -54,10 +103,34 @@ class AuctionScreensTest extends TestCase
         }
     }
 
+    public function test_the_lot_is_rendered_on_first_paint_when_it_is_already_open(): void
+    {
+        // El estado inicial llega por HTTP, así que el HTML no depende del canal
+        // para mostrar un lote que ya estaba abierto.
+        $room = AuctionRoom::query()->sole();
+        $lot = Lot::factory()->for($room, 'room')->create(['title' => 'Lote heredado']);
+        $room->update(['current_lot_id' => $lot->id, 'version' => 4]);
+
+        $this->getJson('/auction/state')
+            ->assertOk()
+            ->assertJsonPath('lot.title', 'Lote heredado')
+            ->assertJsonPath('version', 4);
+    }
+
     public function test_the_development_trigger_is_hidden_outside_local(): void
     {
         foreach (['/', '/emisor', '/receptor'] as $uri) {
             $this->get($uri)->assertDontSee('data-dev-broadcast', escape: false);
         }
+    }
+
+    public function test_the_host_screen_keeps_working_for_a_joined_bidder(): void
+    {
+        // Un pujador puede mirar la pantalla del subastador, pero solo ve el PIN.
+        $this->asParticipant();
+
+        $this->get('/emisor')->assertOk()->assertSee('data-host-login', escape: false);
+
+        $this->assertSame(1, Participant::query()->count());
     }
 }

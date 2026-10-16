@@ -56,4 +56,34 @@ class AuctionScriptGuardTest extends TestCase
         $this->assertSame(1, substr_count($contents, ".channel('auction')"));
         $this->assertSame(1, substr_count($contents, ".listen('.AuctionStateUpdated'"));
     }
+
+    /**
+     * Las URLs del cliente son un contrato con las rutas del servidor: si una
+     * se renombra, el cliente fallaría en silencio.
+     */
+    public function test_the_client_urls_match_the_server_routes(): void
+    {
+        $contents = file_get_contents(resource_path('js/auction.js'));
+
+        foreach ([
+            route('auction.state', absolute: false),
+            route('auction.join', absolute: false),
+            route('host.login', absolute: false),
+            route('auction.lots.store', absolute: false),
+        ] as $uri) {
+            $this->assertStringContainsString("'{$uri}'", $contents, "El cliente no conoce {$uri}.");
+        }
+    }
+
+    /**
+     * El estado se pide por HTTP al cargar: Reverb no reemplaza al endpoint
+     * (regla de oro del proyecto).
+     */
+    public function test_the_client_loads_the_state_over_http(): void
+    {
+        $contents = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString('loadState()', $contents);
+        $this->assertStringContainsString('fetch(endpoints.state', $contents);
+    }
 }
