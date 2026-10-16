@@ -58,5 +58,14 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perSecond(config('auction.limits.bids_per_second'))
                 ->by($participant === null ? 'ip:'.$request->ip() : 'participant:'.$participant);
         });
+
+        // El chat se limita por quien escribe: el pujador por su identidad y el
+        // subastador (sin participante) por su IP.
+        RateLimiter::for('chat-messages', function (Request $request) {
+            $participant = $request->session()->get(SessionIdentity::PARTICIPANT_KEY);
+
+            return Limit::perSecond(config('auction.limits.chat_messages_per_second'))
+                ->by($participant === null ? 'ip:'.$request->ip() : 'participant:'.$participant);
+        });
     }
 }
