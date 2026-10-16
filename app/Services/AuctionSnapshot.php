@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AuctionRoom;
+use App\Models\Bid;
 use App\Models\Lot;
 use App\Models\Participant;
 
@@ -35,8 +36,9 @@ class AuctionSnapshot
             // el reloj del navegador (RF-08).
             'server_now' => now()->toIso8601String(),
             'lot' => $this->lot(),
-            // Las pujas llegan en el Hito 3.
-            'bids' => [],
+            // Últimas pujas del lote abierto, de la más nueva a la más vieja
+            // (RF-10). El cliente ya conoce el resto por el lote.
+            'bids' => $this->bids(),
             'action' => $action,
             'correlation_id' => $correlationId,
         ];
@@ -101,5 +103,34 @@ class AuctionSnapshot
     private function currentLot(): ?Lot
     {
         return $this->room?->currentLot;
+    }
+
+    /**
+     * Últimas pujas del lote, de la más reciente a la más antigua.
+     *
+     * Solo viajan el nombre del autor, el monto y el momento: ni el id del
+     * participante ni su sesión ni su saldo salen de acá (RNF-07).
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function bids(): array
+    {
+        $lot = $this->currentLot();
+
+        if (! $lot instanceof Lot) {
+            return [];
+        }
+
+        return $lot->bids()
+            ->with('participant')
+            ->orderByDesc('id')
+            ->limit(config('auction.snapshot.bids'))
+            ->get()
+            ->map(fn (Bid $bid): array => [
+                'author_name' => $bid->participant?->name,
+                'amount_cents' => $bid->amount_cents,
+                'at' => $bid->created_at?->toIso8601String(),
+            ])
+            ->all();
     }
 }
