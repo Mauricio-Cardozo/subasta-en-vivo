@@ -164,6 +164,31 @@ class AuctionScriptGuardTest extends TestCase
     }
 
     /**
+     * Los estados de la conexión se traducen para el encabezado (color y
+     * etiqueta) y al reconectar se vuelve a pedir el estado por HTTP: Reverb no
+     * reemplaza al endpoint.
+     */
+    public function test_the_connection_states_are_translated_and_resync(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        foreach (['connected', 'connecting', 'disconnected', 'unavailable', 'failed'] as $state) {
+            $this->assertStringContainsString("{$state}:", $code, "Falta el estado `{$state}` en el cliente.");
+        }
+
+        foreach (['En vivo', 'Conectando…', 'Reconectando…', 'Sin conexión'] as $label) {
+            $this->assertStringContainsString($label, $code, "Falta la etiqueta `{$label}`.");
+        }
+
+        foreach (['bg-emerald-400', 'bg-amber-400', 'bg-rose-500'] as $tone) {
+            $this->assertStringContainsString($tone, $code, "Falta el color `{$tone}` de un estado.");
+        }
+
+        $this->assertStringContainsString("connection.bind('state_change'", $code);
+        $this->assertStringContainsString('loadState()', $code);
+    }
+
+    /**
      * El chat se carga desde `auction.js` como un módulo aparte.
      */
     public function test_the_auction_script_starts_the_chat(): void

@@ -30,9 +30,9 @@
             </nav>
 
             <div class="flex items-center gap-3 text-xs">
-                <p class="flex items-center gap-2 text-slate-400">
+                <p class="flex items-center gap-2 text-slate-400" role="status" aria-live="polite">
                     <span class="inline-block size-2 rounded-full bg-slate-600" data-connection-dot></span>
-                    <span data-connection-status>Sin conectar</span>
+                    <span data-connection-status>Conectando…</span>
                 </p>
 
                 <p class="rounded-md border border-slate-800 px-2 py-1 text-slate-300">

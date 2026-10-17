@@ -111,6 +111,28 @@ const statusLabels = {
 /** Umbral para avisar que el cierre está encima. */
 const COUNTDOWN_LOW_MS = 10_000;
 
+/**
+ * Estados de la conexión (Pusher/Echo) traducidos para el encabezado. El
+ * indicador es **informativo**: las acciones van por HTTP y no se bloquean si el
+ * WebSocket está caído; al reconectar se vuelve a pedir el estado.
+ */
+const connectionStates = {
+    connected: { label: 'En vivo', tone: 'online' },
+    connecting: { label: 'Conectando…', tone: 'waiting' },
+    disconnected: { label: 'Reconectando…', tone: 'waiting' },
+    unavailable: { label: 'Sin conexión', tone: 'offline' },
+    failed: { label: 'Sin conexión', tone: 'offline' },
+};
+
+/** Color del punto por tono: verde en vivo, ámbar conectando, rojo caído. */
+const connectionTones = {
+    online: ['bg-emerald-400'],
+    waiting: ['bg-amber-400'],
+    offline: ['bg-rose-500'],
+};
+
+const connectionDotClasses = ['bg-slate-600', ...Object.values(connectionTones).flat()];
+
 function find(selector) {
     return document.querySelector(selector);
 }
@@ -131,14 +153,17 @@ function toggle(selector, visible) {
     }
 }
 
-function setConnection(label, online) {
+/**
+ * Pinta el indicador de conexión: etiqueta y color del punto según el tono.
+ */
+function setConnection(label, tone = 'offline') {
     setText(selectors.status, label);
 
     const dot = find(selectors.dot);
 
     if (dot) {
-        dot.classList.toggle('bg-emerald-400', online);
-        dot.classList.toggle('bg-slate-600', ! online);
+        dot.classList.remove(...connectionDotClasses);
+        dot.classList.add(...(connectionTones[tone] ?? connectionTones.offline));
     }
 }
 
@@ -675,7 +700,7 @@ function wireCloseLot() {
 
 function subscribe() {
     if (! window.Echo) {
-        setConnection('Echo no disponible', false);
+        setConnection('Sin conexión', 'offline');
 
         return;
     }
@@ -688,20 +713,16 @@ function watchConnection() {
     const connection = window.Echo?.connector?.pusher?.connection;
 
     if (! connection) {
-        setConnection('Sin conexión', false);
+        setConnection('Sin conexión', 'offline');
 
         return;
     }
 
-    const labels = {
-        connected: 'En vivo',
-        connecting: 'Conectando…',
-        disconnected: 'Reconectando…',
-        unavailable: 'Sin conexión',
-        failed: 'Sin conexión',
-    };
+    const paint = (pusherState) => {
+        const info = connectionStates[pusherState] ?? { label: pusherState, tone: 'offline' };
 
-    const paint = (pusherState) => setConnection(labels[pusherState] ?? pusherState, pusherState === 'connected');
+        setConnection(info.label, info.tone);
+    };
 
     paint(connection.state);
 
@@ -724,14 +745,14 @@ async function loadState() {
         const response = await fetch(endpoints.state, { headers: { Accept: 'application/json' } });
 
         if (! response.ok) {
-            setConnection(`Error ${response.status}`, false);
+            setConnection(`Error ${response.status}`, 'offline');
 
             return;
         }
 
         render(await response.json());
     } catch {
-        setConnection('Sin conexión', false);
+        setConnection('Sin conexión', 'offline');
     }
 }
 
@@ -751,7 +772,7 @@ function wireDevBroadcast() {
         try {
             await postJson(endpoints.devBroadcast, { version, summary: `Evento de prueba #${version}` });
         } catch (error) {
-            setConnection(error.message, false);
+            setConnection(error.message, 'offline');
         } finally {
             button.disabled = false;
         }
