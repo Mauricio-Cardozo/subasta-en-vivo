@@ -2,6 +2,25 @@
 
 Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](https://keepachangelog.com/) y [SemVer](https://semver.org/).
 
+## [1.0.0] - 2026-10-17
+
+Hito 7: pulido y entrega.
+
+### Agregado
+
+- Historial de lotes cerrados: `AuctionSnapshot::history()` (RF-13) devuelve los lotes `sold`/`unsold`/`cancelled` del más nuevo al más viejo, acotados por `auction.history.limit`, con título, estado, precio final, nombre del ganador y cierre — **sin ids internos**. Viaja dentro del snapshot público, así que está al cargar por `GET /auction/state`, al reconectar y en cada `AuctionStateUpdated`: no hay endpoint nuevo.
+- Parcial `partials/history.blade.php`, compartido por las dos pantallas, y dibujo en `auction.js` (estado coloreado, precio final y ganador; estado vacío cuando no se cerró ninguno).
+
+### Cambiado
+
+- El indicador de conexión del encabezado arranca en `Conectando…` (antes `Sin conectar`), tiene color por estado (verde `En vivo`, ámbar `Conectando…`/`Reconectando…`, rojo `Sin conexión`) y es una región viva (`role="status"` + `aria-live="polite"`). Sigue siendo informativo: las acciones van por HTTP y al reconectar se re-sincroniza el estado (y el historial del chat).
+- README final: secciones de **Historial de lotes** y estados de conexión, guía **Cómo probarlo** con dos navegadores y repaso de la entrega.
+
+### Notas
+
+- La entrega cubre el flujo completo: identidad, apertura de lotes, pujas concurrentes, cierre por vencimiento y manual, anti-sniping, chat con moderación, historial, observabilidad y auditoría.
+- Todo el comportamiento crítico está probado con tests (unidad, feature, vistas, guardas del cliente y concurrencia real en PostgreSQL) y verificado a mano con Reverb.
+
 ## [0.6.0] - 2026-10-16
 
 Hito 6: logging y trazabilidad.
