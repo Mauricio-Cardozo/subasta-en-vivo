@@ -172,6 +172,52 @@ class ConcurrencyTest extends TestCase
         };
     }
 
+    /**
+     * Tarea que abre o encola un lote desde otro proceso (Tarea 2).
+     */
+    private function openTask(string $title): Closure
+    {
+        return function () use ($title): array {
+            $result = app(AuctionService::class)->openLot($title, null, 1_000, 100, 60);
+
+            return [
+                'ok' => $result->ok,
+                'reason' => $result->reason,
+                'lot_id' => $result->context['lot_id'] ?? null,
+                'status' => $result->context['status'] ?? null,
+            ];
+        };
+    }
+
+    /**
+     * Tarea que corre el cierre y el avance perezosos desde otro proceso.
+     */
+    private function settleIfDueTask(): Closure
+    {
+        return function (): array {
+            app(AuctionService::class)->settleIfDue();
+
+            return ['ok' => true];
+        };
+    }
+
+    /**
+     * Tarea que quita un lote de la cola desde otro proceso (Tarea 2).
+     */
+    private function dequeueTask(int $lotId): Closure
+    {
+        return function () use ($lotId): array {
+            $lot = Lot::query()->findOrFail($lotId);
+            $result = app(AuctionService::class)->dequeue($lot);
+
+            return [
+                'ok' => $result->ok,
+                'reason' => $result->reason,
+                'status' => $result->context['status'] ?? null,
+            ];
+        };
+    }
+
     public function test_the_row_lock_serialises_two_connections(): void
     {
         $room = AuctionRoom::factory()->create();
@@ -452,6 +498,96 @@ class ConcurrencyTest extends TestCase
         $sorted = $ids;
         sort($sorted);
         $this->assertSame($sorted, $ids);
+    }
+
+    public function test_concurrent_enqueues_are_all_kept(): void
+    {
+        $lot = $this->openLot(['start_price_cents' => 5_000, 'min_increment_cents' => 100]);
+        $room = $lot->room;
+
+        $results = array_values(Concurrency::run([
+            $this->openTask('Primero'),
+            $this->openTask('Segundo'),
+            $this->openTask('Tercero'),
+        ]));
+
+        // Con un lote abierto, los tres se encolan sin pisarse.
+        $this->assertSame([true, true, true], array_column($results, 'ok'));
+        $this->assertSame(['queued', 'queued', 'queued'], array_column($results, 'status'));
+        $this->assertCount(3, array_unique(array_column($results, 'lot_id')));
+
+        $queued = Lot::query()
+            ->where('status', LotStatus::Queued->value)
+            ->orderBy('id')
+            ->pluck('title')
+            ->all();
+
+        // Nadie se pierde ni se duplica, y sigue habiendo un solo lote abierto.
+        $this->assertEqualsCanonicalizing(['Primero', 'Segundo', 'Tercero'], $queued);
+        $this->assertSame(1, Lot::query()->where('status', LotStatus::Open->value)->count());
+
+        // Una versión por cada encolado.
+        $this->assertSame(3, $room->fresh()->version);
+    }
+
+    public function test_a_close_and_the_lazy_settlement_settle_the_lot_once(): void
+    {
+        $lot = $this->openLot(['start_price_cents' => 5_000, 'min_increment_cents' => 100]);
+        $room = $lot->room;
+
+        // El lote ya venció: el cierre manual y el perezoso compiten por él.
+        $lot->forceFill(['ends_at' => now()->subSecond()])->save();
+
+        $queued = Lot::factory()->for($room, 'room')->queued()->create(['title' => 'Siguiente']);
+
+        Concurrency::run([
+            'close' => $this->closeTask(),
+            'state' => $this->settleIfDueTask(),
+        ]);
+
+        // Uno lo liquida; el otro no hace nada (o se rechaza sin efecto).
+        $this->assertContains($lot->fresh()->status, [LotStatus::Sold, LotStatus::Unsold]);
+        $this->assertSame(1, $room->fresh()->version, 'El lote se liquida exactamente una vez.');
+
+        // Con cola queda la pausa, y el siguiente sigue esperando su turno.
+        $this->assertNotNull($room->fresh()->queue_opens_at);
+        $this->assertSame(LotStatus::Queued, $queued->fresh()->status);
+    }
+
+    public function test_removing_a_queued_lot_races_with_the_auto_open(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $closed = Lot::factory()->for($room, 'room')->closed()->create([
+            'title' => 'Anterior',
+            'status' => LotStatus::Unsold,
+        ]);
+        $room->update(['current_lot_id' => $closed->id, 'version' => 1]);
+
+        $queued = Lot::factory()->for($room, 'room')->queued()->create(['title' => 'Siguiente']);
+
+        // La pausa ya venció: quitar el lote y abrirlo compiten.
+        $room->forceFill(['queue_opens_at' => now()->subSecond()])->save();
+
+        $results = Concurrency::run([
+            'delete' => $this->dequeueTask($queued->id),
+            'state' => $this->settleIfDueTask(),
+        ]);
+
+        $status = $queued->fresh()->status;
+
+        // Exactamente una transición gana: o se quitó (cancelled) o se abrió.
+        $this->assertContains($status, [LotStatus::Open, LotStatus::Cancelled]);
+        $this->assertSame(2, $queued->room->version, 'Una sola transición puede confirmar.');
+
+        if ($status === LotStatus::Open) {
+            $this->assertFalse($results['delete']['ok']);
+            $this->assertSame('lot_not_queued', $results['delete']['reason']);
+            $this->assertSame($queued->id, $queued->room->current_lot_id);
+        } else {
+            $this->assertTrue($results['delete']['ok']);
+            $this->assertSame('cancelled', $results['delete']['status']);
+            $this->assertNull($queued->room->queue_opens_at);
+        }
     }
 
     private function setShortLockTimeout(Connection $connection): void

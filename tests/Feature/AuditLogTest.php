@@ -164,12 +164,57 @@ class AuditLogTest extends TestCase
             $this->postJson('/auction/lots', [
                 'title' => 'Reloj antiguo',
                 'start_price_cents' => 5_000,
+                'action_id' => 'apertura-1',
             ])->assertCreated();
             $this->postJson('/auction/lots/close', ['action_id' => 'cierre-1'])->assertCreated();
         });
 
-        $this->assertSame('accepted', $this->event($records, 'auction.lot_open')['context']['outcome']);
+        $opened = $this->event($records, 'auction.lot_open');
+
+        $this->assertSame('accepted', $opened['context']['outcome']);
+        $this->assertSame('open', $opened['context']['result']['status']);
         $this->assertSame('accepted', $this->event($records, 'auction.lot_close')['context']['outcome']);
+    }
+
+    public function test_queuing_a_lot_and_removing_it_from_the_queue_are_audited(): void
+    {
+        AuctionRoom::factory()->create();
+
+        $records = $this->audit(function (): void {
+            $this->asHost();
+            $this->postJson('/auction/lots', [
+                'title' => 'Reloj antiguo',
+                'start_price_cents' => 5_000,
+                'action_id' => 'apertura-1',
+            ])->assertCreated();
+
+            $queuedId = $this->postJson('/auction/lots', [
+                'title' => 'Reloj de pie',
+                'start_price_cents' => 7_000,
+                'action_id' => 'apertura-2',
+            ])->assertCreated()->json('lot_id');
+
+            $this->deleteJson("/auction/lots/{$queuedId}")->assertOk();
+            // La repetición no vuelve a transicionar: se audita como `replayed`.
+            $this->deleteJson("/auction/lots/{$queuedId}")->assertOk();
+        });
+
+        // Las dos aperturas comparten evento: el resultado dice cuál abrió y
+        // cuál quedó esperando.
+        $opens = $this->events($records, 'auction.lot_open');
+
+        $this->assertSame(['open', 'queued'], array_column(
+            array_map(fn (array $record): array => $record['context']['result'], $opens),
+            'status',
+        ));
+
+        $removals = $this->events($records, 'auction.lot_dequeued');
+
+        $this->assertSame(['accepted', 'replayed'], array_column(
+            array_map(fn (array $record): array => $record['context'], $removals),
+            'outcome',
+        ));
+        $this->assertSame('cancelled', $removals[0]['context']['result']['status']);
     }
 
     public function test_chat_post_delete_and_denial_are_audited(): void

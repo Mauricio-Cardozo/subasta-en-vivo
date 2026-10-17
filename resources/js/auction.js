@@ -20,6 +20,7 @@ const state = {
     lot: null,
     bids: null,
     history: null,
+    queue: null,
     me: null,
 };
 
@@ -29,12 +30,13 @@ let bidding = false;
 /**
  * Ancla del temporizador. Se recalcula con el `remaining_ms` del servidor (no
  * con el reloj del navegador): al llegar un evento (una puja que extiende el
- * cierre, por ejemplo) el restante se reajusta solo.
+ * cierre, por ejemplo) el restante se reajusta solo. Durante la pausa entre
+ * lotes ancla con `queue.opens_in_ms` (Tarea 2).
  */
 let countdownDeadline = null;
 
-/** Evita pedir el cierre más de una vez por ancla al llegar a cero. */
-let closeRequested = false;
+/** Evita pedir el estado más de una vez por ancla al llegar a cero. */
+let syncRequested = false;
 
 /** Un `action_id` por intento: repetir la acción nunca puja dos veces (4.7). */
 function newActionId() {
@@ -110,6 +112,12 @@ const statusLabels = {
 
 /** Umbral para avisar que el cierre está encima. */
 const COUNTDOWN_LOW_MS = 10_000;
+
+/**
+ * Retraso máximo para pedir el estado al llegar un contador a cero: reparte la
+ * ráfaga cuando muchos navegadores miran el mismo contador (Tarea 2).
+ */
+const SYNC_JITTER_MS = 500;
 
 /**
  * Estados de la conexión (Pusher/Echo) traducidos para el encabezado. El
@@ -220,18 +228,30 @@ function historyStatusClass(status) {
     return classes[status] ?? 'text-slate-400';
 }
 
-/** Reancla la cuenta regresiva desde `remaining_ms` del servidor (RF-08). */
-function anchorCountdown(lot) {
-    closeRequested = false;
+/**
+ * Reancla la cuenta regresiva con las marcas del servidor (RF-08): el lote
+ * abierto usa `remaining_ms` y la pausa entre lotes usa `queue.opens_in_ms`
+ * (Tarea 2). Sin ninguna de las dos no hay nada que contar.
+ */
+function anchorCountdown(snapshot) {
+    syncRequested = false;
 
-    countdownDeadline = lot && lot.status === 'open' && typeof lot.remaining_ms === 'number'
-        ? Date.now() + lot.remaining_ms
-        : null;
+    const lot = snapshot.lot;
+
+    if (lot && lot.status === 'open' && typeof lot.remaining_ms === 'number') {
+        countdownDeadline = Date.now() + lot.remaining_ms;
+
+        return;
+    }
+
+    const pause = snapshot.queue?.opens_in_ms;
+    countdownDeadline = typeof pause === 'number' ? Date.now() + pause : null;
 }
 
 /**
- * Dibuja el restante y, al llegar a cero, pide el estado: el cierre lo decide el
- * servidor (es perezoso), así que el navegador no lo simula.
+ * Dibuja el restante y, al llegar a cero, pide el estado: el cierre del lote y
+ * la apertura del siguiente los decide el servidor (son perezosos), así que el
+ * navegador no los simula.
  */
 function renderCountdown() {
     const element = find(selectors.lotCountdown);
@@ -248,24 +268,19 @@ function renderCountdown() {
         }
     }
 
-    if (countdownDeadline === null || closeRequested) {
+    if (countdownDeadline === null || syncRequested) {
         return;
     }
 
     if (countdownDeadline - Date.now() <= 0) {
-        closeRequested = true;
-        loadState();
+        syncRequested = true;
+        setTimeout(loadState, Math.random() * SYNC_JITTER_MS);
     }
 }
 
 function renderLot(lot) {
     toggle(selectors.lotPanel, Boolean(lot));
     toggle(selectors.lotEmpty, ! lot);
-
-    // La cuenta regresiva se reancla con cada estado: una puja que extiende el
-    // cierre (anti-sniping) llega como `remaining_ms` nuevo.
-    anchorCountdown(lot);
-    renderCountdown();
 
     if (! lot) {
         return;
@@ -503,6 +518,16 @@ function render(snapshot) {
         state.history = snapshot.history;
     }
 
+    if ('queue' in snapshot) {
+        state.queue = snapshot.queue;
+    }
+
+    // La cuenta regresiva se reancla con cada estado: una puja que extiende el
+    // cierre (anti-sniping), el vencimiento o la pausa de la cola llegan como
+    // marcas nuevas.
+    anchorCountdown(state);
+    renderCountdown();
+
     renderLot(state.lot);
     renderBids(state.bids);
     renderHistory(state.history);
@@ -585,7 +610,7 @@ function clearFormError(form) {
  * Tras un cambio de identidad se recarga la página: el HTML lo arma el servidor
  * según la sesión, así que el navegador nunca deduce permisos por su cuenta.
  */
-function wireForm(selector, { url, payload, reload = false }) {
+function wireForm(selector, { url, payload, reload = false, refresh = false }) {
     const form = find(selector);
 
     if (! form) {
@@ -609,6 +634,12 @@ function wireForm(selector, { url, payload, reload = false }) {
                 window.location.reload();
             } else {
                 form.reset();
+
+                // Con `refresh`, quien envió ve el resultado por HTTP aunque el
+                // broadcast tarde o el WebSocket esté caído.
+                if (refresh) {
+                    await loadState();
+                }
             }
         } catch (error) {
             showFormError(form, error.message);
@@ -793,13 +824,17 @@ wireForm('[data-host-login]', {
 
 wireForm('[data-open-lot]', {
     url: endpoints.openLot,
+    // El `action_id` va primero: un doble clic repite la respuesta original en
+    // lugar de encolar un duplicado (Tarea 2).
     payload: (data) => ({
+        action_id: newActionId(),
         title: String(data.get('title') ?? '').trim(),
         description: String(data.get('description') ?? '').trim() || null,
         start_price_cents: numberField(data, 'start_price_cents'),
         min_increment_cents: numberField(data, 'min_increment_cents'),
         duration_seconds: numberField(data, 'duration_seconds'),
     }),
+    refresh: true,
 });
 
 watchConnection();
