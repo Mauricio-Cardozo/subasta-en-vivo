@@ -165,6 +165,22 @@ class AuctionScriptGuardTest extends TestCase
     }
 
     /**
+     * Si quitar un lote deja la cola vacía durante la pausa, la marca llega
+     * null (o ya no existe el bloque) y el cliente corta esa cuenta atrás:
+     * nada queda corriendo ni pidiendo estado en bucle (Tarea 2).
+     */
+    public function test_the_pause_countdown_stops_when_the_server_sends_no_mark(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString(
+            "countdownDeadline = typeof pause === 'number' ? Date.now() + pause : null;",
+            $code
+        );
+        $this->assertStringContainsString('if (countdownDeadline === null || syncRequested)', $code);
+    }
+
+    /**
      * El estado se pide por HTTP al cargar: Reverb no reemplaza al endpoint
      * (regla de oro del proyecto).
      */
