@@ -19,6 +19,7 @@ const state = {
     version: null,
     lot: null,
     bids: null,
+    history: null,
     me: null,
 };
 
@@ -87,6 +88,8 @@ const selectors = {
     balance: '[data-balance]',
     bids: '[data-bids]',
     bidsEmpty: '[data-bids-empty]',
+    history: '[data-history]',
+    historyEmpty: '[data-history-empty]',
     bidSection: '[data-bid-section]',
     bidMinimum: '[data-bid-minimum]',
     bidForm: '[data-bid]',
@@ -179,6 +182,17 @@ function formatCountdown(remainingMs) {
 
 function statusLabel(status) {
     return statusLabels[status] ?? status ?? '';
+}
+
+/** Color del estado de un lote cerrado del historial. */
+function historyStatusClass(status) {
+    const classes = {
+        sold: 'text-emerald-300',
+        unsold: 'text-slate-400',
+        cancelled: 'text-rose-300',
+    };
+
+    return classes[status] ?? 'text-slate-400';
 }
 
 /** Reancla la cuenta regresiva desde `remaining_ms` del servidor (RF-08). */
@@ -284,6 +298,64 @@ function renderBids(bids) {
         at.textContent = formatTime(bid.at);
 
         row.append(author, amount, at);
+        list.append(row);
+    });
+}
+
+/**
+ * Historial de lotes cerrados (RF-13).
+ *
+ * Se repinta entero con cada snapshot (el servidor manda la lista ya ordenada y
+ * acotada). Todo texto va con `textContent`, nunca HTML.
+ */
+function renderHistory(history) {
+    const list = find(selectors.history);
+
+    if (! list) {
+        return;
+    }
+
+    const items = Array.isArray(history) ? history : [];
+
+    while (list.firstChild) {
+        list.removeChild(list.firstChild);
+    }
+
+    toggle(selectors.historyEmpty, items.length === 0);
+
+    items.forEach((lot) => {
+        const row = document.createElement('li');
+        row.dataset.historyItem = '';
+        row.className = 'flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-950/40 px-3 py-2';
+
+        if (lot.closed_at) {
+            row.title = new Date(lot.closed_at).toLocaleString('es-AR');
+        }
+
+        const title = document.createElement('span');
+        title.className = 'min-w-0 flex-1 truncate text-slate-200';
+        title.textContent = lot.title ?? '—';
+
+        const detail = document.createElement('span');
+        detail.className = 'flex items-center gap-3 text-xs text-slate-500';
+
+        const status = document.createElement('span');
+        status.className = historyStatusClass(lot.status);
+        status.textContent = statusLabel(lot.status);
+
+        const price = document.createElement('span');
+        price.className = 'font-mono text-amber-300';
+        price.textContent = typeof lot.final_price_cents === 'number' ? formatCents(lot.final_price_cents) : '—';
+
+        detail.append(status, price);
+
+        if (typeof lot.winner_name === 'string' && lot.winner_name !== '') {
+            const winner = document.createElement('span');
+            winner.textContent = `Ganó ${lot.winner_name}`;
+            detail.append(winner);
+        }
+
+        row.append(title, detail);
         list.append(row);
     });
 }
@@ -402,8 +474,13 @@ function render(snapshot) {
         state.bids = snapshot.bids;
     }
 
+    if ('history' in snapshot) {
+        state.history = snapshot.history;
+    }
+
     renderLot(state.lot);
     renderBids(state.bids);
+    renderHistory(state.history);
     renderBidForm();
     renderCloseForm();
 
