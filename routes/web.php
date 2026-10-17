@@ -40,6 +40,11 @@ Route::post('/auction/lots/close', [AuctionController::class, 'closeLot'])
     ->middleware(['throttle:lot-closes', 'host'])
     ->name('auction.lots.close');
 
+// Quita un lote de la cola (Tarea 2, solo subastador).
+Route::delete('/auction/lots/{lot}', [AuctionController::class, 'destroyLot'])
+    ->middleware(['throttle:lot-deletes', 'host'])
+    ->name('auction.lots.destroy');
+
 // Puja de un participante con identidad (RF-04).
 Route::post('/auction/bids', [BidController::class, 'store'])
     ->middleware(['throttle:bids', 'participant'])

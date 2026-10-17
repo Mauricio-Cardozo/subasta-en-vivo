@@ -35,6 +35,7 @@ class AuctionStateUpdated implements ShouldBroadcastNow, ShouldDispatchAfterComm
         'lot',
         'bids',
         'history',
+        'queue',
         'action',
         'server_now',
         'correlation_id',

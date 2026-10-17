@@ -24,6 +24,7 @@ class AuctionRoom extends Model
     protected $fillable = [
         'version',
         'current_lot_id',
+        'queue_opens_at',
     ];
 
     /**
@@ -33,6 +34,7 @@ class AuctionRoom extends Model
     {
         return [
             'version' => 'integer',
+            'queue_opens_at' => 'datetime',
         ];
     }
 

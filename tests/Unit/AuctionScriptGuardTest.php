@@ -137,6 +137,50 @@ class AuctionScriptGuardTest extends TestCase
     }
 
     /**
+     * La apertura también es idempotente (Tarea 2): va con un `action_id`, así
+     * un doble clic repite la respuesta en lugar de encolar un duplicado.
+     */
+    public function test_the_open_request_carries_an_action_id(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertMatchesRegularExpression(
+            '/payload: \(data\) => \(\{\s*action_id: newActionId\(\),/s',
+            $code,
+            'La apertura debe mandar un action_id.'
+        );
+    }
+
+    /**
+     * La pausa entre lotes se cuenta con la marca del servidor y, al llegar a
+     * cero, cada navegador pide el estado con un retraso aleatorio: la ráfaga
+     * de muchos testers no cae toda junta (Tarea 2).
+     */
+    public function test_the_pause_countdown_uses_the_server_mark_and_spreads_the_sync(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString('queue?.opens_in_ms', $code);
+        $this->assertStringContainsString('Math.random() * SYNC_JITTER_MS', $code);
+    }
+
+    /**
+     * Si quitar un lote deja la cola vacía durante la pausa, la marca llega
+     * null (o ya no existe el bloque) y el cliente corta esa cuenta atrás:
+     * nada queda corriendo ni pidiendo estado en bucle (Tarea 2).
+     */
+    public function test_the_pause_countdown_stops_when_the_server_sends_no_mark(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString(
+            "countdownDeadline = typeof pause === 'number' ? Date.now() + pause : null;",
+            $code
+        );
+        $this->assertStringContainsString('if (countdownDeadline === null || syncRequested)', $code);
+    }
+
+    /**
      * El estado se pide por HTTP al cargar: Reverb no reemplaza al endpoint
      * (regla de oro del proyecto).
      */

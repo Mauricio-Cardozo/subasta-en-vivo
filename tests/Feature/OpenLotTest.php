@@ -9,6 +9,7 @@ use App\Models\Lot;
 use Database\Seeders\AuctionRoomSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class OpenLotTest extends TestCase
@@ -30,6 +31,9 @@ class OpenLotTest extends TestCase
     private function payload(array $overrides = []): array
     {
         return array_merge([
+            // Un `action_id` nuevo por intento: repetir el payload no repite la
+            // acción (Tarea 2).
+            'action_id' => Str::uuid()->toString(),
             'title' => 'Reloj antiguo',
             'description' => 'Funciona y anda bien',
             'start_price_cents' => 5_000,
@@ -63,7 +67,7 @@ class OpenLotTest extends TestCase
 
         $this->postJson('/auction/lots', $this->payload())
             ->assertCreated()
-            ->assertJson(['version' => 1]);
+            ->assertJson(['version' => 1, 'status' => 'open']);
 
         $room = AuctionRoom::query()->sole();
         $lot = Lot::query()->sole();
@@ -85,6 +89,7 @@ class OpenLotTest extends TestCase
         $lot = Lot::query()->sole();
 
         $this->assertSame(90, (int) $lot->started_at->diffInSeconds($lot->ends_at));
+        $this->assertSame(90, $lot->duration_seconds);
         $this->assertSame(0, $lot->extensions);
     }
 
@@ -100,20 +105,33 @@ class OpenLotTest extends TestCase
             config('auction.lot.duration_seconds'),
             (int) $lot->started_at->diffInSeconds($lot->ends_at)
         );
+        $this->assertSame(config('auction.lot.duration_seconds'), $lot->duration_seconds);
     }
 
-    public function test_a_second_open_lot_is_rejected_without_touching_the_state(): void
+    public function test_a_second_lot_joins_the_queue_instead_of_opening(): void
     {
         $this->asHost();
 
         $this->postJson('/auction/lots', $this->payload())->assertCreated();
 
         $this->postJson('/auction/lots', $this->payload(['title' => 'Otro lote']))
-            ->assertStatus(422)
-            ->assertJson(['reason' => 'lot_already_open']);
+            ->assertCreated()
+            ->assertJson(['status' => 'queued', 'version' => 2]);
 
-        $this->assertSame(1, Lot::query()->count());
-        $this->assertSame(1, AuctionRoom::query()->sole()->version);
+        $lots = Lot::query()->orderBy('id')->get();
+
+        $this->assertCount(2, $lots);
+        $this->assertSame(LotStatus::Open, $lots[0]->status);
+        $this->assertSame(LotStatus::Queued, $lots[1]->status);
+        $this->assertSame('Otro lote', $lots[1]->title);
+
+        // Un lote encolado no arrancó ni tiene plazo todavía.
+        $this->assertNull($lots[1]->started_at);
+        $this->assertNull($lots[1]->ends_at);
+
+        // El lote actual sigue siendo el abierto (el resultado se mantiene a la
+        // vista durante la pausa).
+        $this->assertSame($lots[0]->id, AuctionRoom::query()->sole()->current_lot_id);
     }
 
     public function test_a_closed_lot_does_not_block_the_next_one(): void
@@ -127,7 +145,9 @@ class OpenLotTest extends TestCase
             'closed_at' => now(),
         ]);
 
-        $this->postJson('/auction/lots', $this->payload(['title' => 'Segundo lote']))->assertCreated();
+        $this->postJson('/auction/lots', $this->payload(['title' => 'Segundo lote']))
+            ->assertCreated()
+            ->assertJson(['status' => 'open']);
 
         $this->assertSame(2, Lot::query()->count());
         $this->assertSame(2, AuctionRoom::query()->sole()->version);
@@ -168,20 +188,62 @@ class OpenLotTest extends TestCase
                 && $payload['lot']['status'] === 'open'
                 && $payload['action']['type'] === 'lot_opened'
                 && $payload['bids'] === []
+                && $payload['queue'] === ['opens_at' => null, 'opens_in_ms' => null, 'items' => []]
                 && ! array_key_exists('me', $payload);
         });
     }
 
     public function test_a_rejected_open_does_not_emit_an_event(): void
     {
+        config()->set('auction.queue.max', 1);
+
         $this->asHost();
 
         $this->postJson('/auction/lots', $this->payload())->assertCreated();
+        $this->postJson('/auction/lots', $this->payload(['title' => 'En cola']))->assertCreated();
 
         Event::fake([AuctionStateUpdated::class]);
 
-        $this->postJson('/auction/lots', $this->payload(['title' => 'Otro']))->assertStatus(422);
+        $this->postJson('/auction/lots', $this->payload(['title' => 'De más']))
+            ->assertStatus(422)
+            ->assertJson(['reason' => 'queue_full']);
 
         Event::assertNotDispatched(AuctionStateUpdated::class);
+
+        // El rechazo no toca el estado.
+        $this->assertSame(2, Lot::query()->count());
+        $this->assertSame(2, AuctionRoom::query()->sole()->version);
+    }
+
+    public function test_the_action_id_is_required_to_open(): void
+    {
+        $this->asHost();
+
+        $this->postJson('/auction/lots', [
+            'title' => 'Reloj antiguo',
+            'start_price_cents' => 5_000,
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('action_id');
+
+        $this->assertSame(0, Lot::query()->count());
+    }
+
+    public function test_the_same_action_id_does_not_enqueue_twice(): void
+    {
+        $this->asHost();
+
+        $this->postJson('/auction/lots', $this->payload(['title' => 'Reloj']))->assertCreated();
+
+        $payload = $this->payload(['title' => 'En cola', 'action_id' => 'abrir-1']);
+
+        $first = $this->postJson('/auction/lots', $payload)->assertCreated()->assertJson(['status' => 'queued']);
+        $second = $this->postJson('/auction/lots', $payload)->assertCreated();
+
+        // El reintento repite la respuesta original: mismo lote, misma versión.
+        $this->assertSame($first->json(), $second->json());
+        $this->assertSame(2, Lot::query()->count());
+        $this->assertSame(1, Lot::query()->where('status', LotStatus::Queued->value)->count());
+        $this->assertSame(2, AuctionRoom::query()->sole()->version);
     }
 }
