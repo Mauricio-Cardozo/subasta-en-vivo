@@ -106,6 +106,8 @@
                     </form>
                 </section>
             @endif
+
+            @include('auction.partials.history')
         </div>
 
         <div class="lg:col-span-2">

@@ -34,6 +34,7 @@ class AuctionSnapshotTest extends TestCase
         $this->assertSame(0, $state['version']);
         $this->assertNull($state['lot']);
         $this->assertSame([], $state['bids']);
+        $this->assertSame([], $state['history']);
         $this->assertNull($state['action']);
         $this->assertArrayHasKey('server_now', $state);
     }
@@ -77,7 +78,7 @@ class AuctionSnapshotTest extends TestCase
 
         $this->assertArrayNotHasKey('me', $state);
         $this->assertSame(
-            ['version', 'server_now', 'lot', 'bids', 'action', 'correlation_id'],
+            ['version', 'server_now', 'lot', 'bids', 'history', 'action', 'correlation_id'],
             array_keys($state)
         );
     }
@@ -180,5 +181,67 @@ class AuctionSnapshotTest extends TestCase
         $room->update(['current_lot_id' => $lot->id]);
 
         $this->assertSame([], (new AuctionSnapshot($room->fresh()))->build()['bids']);
+    }
+
+    public function test_the_history_block_lists_closed_lots_newest_first(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $winner = Participant::factory()->create(['name' => 'Beto']);
+
+        // Viejo (sin vender) y nuevo (vendido): el lote abierto queda afuera.
+        Lot::factory()->for($room, 'room')->closed()->create([
+            'title' => 'Lote viejo',
+            'status' => LotStatus::Unsold,
+            'current_price_cents' => null,
+        ]);
+        Lot::factory()->for($room, 'room')->closed()->create([
+            'title' => 'Lote nuevo',
+            'status' => LotStatus::Sold,
+            'current_price_cents' => 7_500,
+            'winner_participant_id' => $winner->id,
+        ]);
+        $open = Lot::factory()->for($room, 'room')->create(['title' => 'Lote abierto']);
+        $room->update(['current_lot_id' => $open->id]);
+
+        $history = (new AuctionSnapshot($room->fresh()))->build()['history'];
+
+        $this->assertCount(2, $history);
+        $this->assertSame('Lote nuevo', $history[0]['title']);
+        $this->assertSame('sold', $history[0]['status']);
+        $this->assertSame(7_500, $history[0]['final_price_cents']);
+        $this->assertSame('Beto', $history[0]['winner_name']);
+        $this->assertNotNull($history[0]['closed_at']);
+
+        $this->assertSame('Lote viejo', $history[1]['title']);
+        $this->assertSame('unsold', $history[1]['status']);
+        $this->assertNull($history[1]['final_price_cents']);
+        $this->assertNull($history[1]['winner_name']);
+    }
+
+    public function test_the_history_block_is_capped_by_config(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $cap = (int) config('auction.history.limit');
+
+        Lot::factory()->for($room, 'room')->closed()->count($cap + 3)->create();
+
+        $this->assertCount($cap, (new AuctionSnapshot($room->fresh()))->build()['history']);
+    }
+
+    public function test_the_history_block_never_leaks_internal_ids(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        Lot::factory()->for($room, 'room')->closed()->create();
+
+        $entry = (new AuctionSnapshot($room->fresh()))->build()['history'][0];
+
+        $this->assertSame(
+            ['title', 'status', 'final_price_cents', 'winner_name', 'closed_at'],
+            array_keys($entry)
+        );
+
+        foreach (self::INTERNAL_KEYS as $key) {
+            $this->assertArrayNotHasKey($key, $entry);
+        }
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\LotStatus;
 use App\Models\AuctionRoom;
 use App\Models\Bid;
 use App\Models\Lot;
@@ -39,6 +40,8 @@ class AuctionSnapshot
             // Últimas pujas del lote abierto, de la más nueva a la más vieja
             // (RF-10). El cliente ya conoce el resto por el lote.
             'bids' => $this->bids(),
+            // Lotes ya cerrados, del más nuevo al más viejo (RF-13).
+            'history' => $this->history(),
             'action' => $action,
             'correlation_id' => $correlationId,
         ];
@@ -98,6 +101,40 @@ class AuctionSnapshot
             'extensions' => $lot->extensions,
             'closed_at' => $lot->closed_at?->toIso8601String(),
         ];
+    }
+
+    /**
+     * Lotes cerrados, del más nuevo al más viejo (RF-13).
+     *
+     * Igual que el resto del snapshot, solo viajan campos públicos: título,
+     * estado, precio final, nombre del ganador y cuándo cerró. Ni ids internos,
+     * ni sesiones, ni saldos (RNF-07). `final_price_cents` es el precio al que
+     * quedó el lote (null si nunca tuvo pujas).
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function history(): array
+    {
+        $limit = (int) config('auction.history.limit');
+
+        if (! $this->room instanceof AuctionRoom || $limit < 1) {
+            return [];
+        }
+
+        return $this->room->lots()
+            ->where('status', '!=', LotStatus::Open->value)
+            ->with('winner')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get()
+            ->map(fn (Lot $lot): array => [
+                'title' => $lot->title,
+                'status' => $lot->status->value,
+                'final_price_cents' => $lot->current_price_cents,
+                'winner_name' => $lot->winner?->name,
+                'closed_at' => $lot->closed_at?->toIso8601String(),
+            ])
+            ->all();
     }
 
     private function currentLot(): ?Lot
