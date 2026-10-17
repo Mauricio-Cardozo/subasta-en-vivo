@@ -45,6 +45,17 @@ npm run dev              # assets en desarrollo
 
 La configuración de Reverb (`REVERB_*` y `VITE_REVERB_*`) vive en `.env`; el repositorio solo incluye `.env.example` sin valores reales.
 
+## Cómo probarlo
+
+1. Levantá los tres procesos y abrí la app en **dos navegadores o ventanas** distintas.
+2. En una, entrá a `/receptor` y elegí un nombre (pujador). En la otra, entrá a `/emisor` e iniciá sesión con el PIN (`AUCTION_HOST_PIN`).
+3. Como subastador, abrí un lote con una duración corta (por ejemplo 60 s).
+4. Como pujador, pujá: el precio y el temporizador cambian en las dos pantallas sin recargar.
+5. Esperá a que venza (o cerrá el lote a mano): el lote aparece en el **historial** con su resultado, y el ganador ve el saldo descontado.
+6. Probá el chat y su moderación, y el indicador de conexión (podés bajar Reverb y verlo pasar a `Sin conexión`).
+
+Todo lo que se ve sale del servidor: si algo no llega por el canal, se recupera por HTTP al reconectar.
+
 ## Tests y calidad
 
 ```bash
@@ -87,7 +98,7 @@ navegador (/emisor, /receptor)              servidor                        clie
 - El chat usa el mismo canal desde `resources/js/chat.js`: `.ChatMessagePosted` y `.ChatMessageDeleted`, y pide `GET /auction/chat` al cargar y al reconectar.
 - El estado inicial se pide por **HTTP** (`GET /auction/state`); al reconectar también. Reverb no reemplaza al endpoint.
 - El cliente ignora eventos con `version` menor o igual a la mostrada.
-- El indicador del encabezado refleja el estado real de la conexión (`En vivo`, `Conectando…`, `Reconectando…`, `Sin conexión`).
+- El indicador del encabezado refleja el estado real de la conexión: `En vivo` (verde), `Conectando…`/`Reconectando…` (ámbar) y `Sin conexión` (rojo), en una región viva (`aria-live`). Es informativo: las acciones van por HTTP y no se bloquean si el WebSocket está caído.
 - En `APP_ENV=local` aparece el botón **Emitir evento de prueba**, que llama a `POST /dev/broadcast` (ruta que no existe en otros entornos).
 
 ### Pujar
@@ -108,6 +119,12 @@ navegador (/emisor, /receptor)              servidor                        clie
 - En vivo por el mismo canal `auction`: `ChatMessagePosted` para lo nuevo y `ChatMessageDeleted` para lo borrado. El cliente pide `GET /auction/chat` al cargar y **al reconectar** (Reverb no repite lo que pasó sin conexión) y ordena por `id`.
 - **Moderar:** el subastador borra cualquier mensaje; el pujador, solo los suyos. El servidor lo vuelve a comprobar (el botón del cliente es solo cosmético) y el borrado es físico, así que no reaparece al recargar.
 
+### Historial de lotes
+
+- Los lotes ya cerrados (vendidos, sin vender o cancelados) se listan del más nuevo al más viejo en las dos pantallas, con título, estado, precio final y ganador (RF-13).
+- Viaja dentro del **mismo snapshot público** (acotado por `auction.history.limit`), así que aparece al cargar por HTTP y se actualiza en vivo cuando un lote se cierra: no hay un endpoint aparte y el cliente no calcula nada.
+- Igual que el resto del snapshot, solo expone campos públicos: nunca ids internos, sesiones ni saldos ajenos.
+
 ## Identidad
 
 No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**.
@@ -123,7 +140,7 @@ No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**
 
 - Toda acción que modifica estado es atómica: transacción + `lockForUpdate` sobre la fila de la sala (`auction_rooms`), con un único orden de bloqueo.
 - El servidor valida todo: montos, saldo, tiempo y rol. Ningún valor económico lo decide el cliente; los montos son enteros en centavos. Las acciones devuelven un `ActionResult`: un rechazo de negocio es un 422 con motivo, nunca una excepción ni un evento.
-- `AuctionSnapshot` es el serializador único del estado público: lo comparten el evento y `GET /auction/state`, y solo expone nombres y montos (nunca ids internos, sesiones ni saldos ajenos). Incluye las últimas pujas del lote abierto.
+- `AuctionSnapshot` es el serializador único del estado público: lo comparten el evento y `GET /auction/state`, y solo expone nombres y montos (nunca ids internos, sesiones ni saldos ajenos). Incluye las últimas pujas del lote abierto y el historial de lotes cerrados (RF-10, RF-13).
 - El broadcast (`AuctionStateUpdated`, canal público `auction`) se emite solo después del `commit`. Un rechazo no emite evento de éxito: responde 422 y se audita.
 - Cierre perezoso sin cron: el vencimiento se resuelve dentro de cada acción y de `GET /auction/state` (con `Cache-Control: no-store` e idempotente); el subastador puede cerrar antes con `POST /auction/lots/close`.
 - `version` es la versión del estado persistido de la sala: sube una vez por transición confirmada y permite ignorar eventos desordenados. El chat no la usa: se ordena por `id`.
@@ -150,7 +167,7 @@ app/
   Services/          # AuctionService, AuctionSnapshot, ChatService, SessionIdentity, ActionIdempotency, AuditLogger
   Support/           # ActionResult, Money, CorrelationId, RequestContext
 config/auction.php
-resources/views/auction/   # layout, emisor, receptor, partials/lot, partials/chat
+resources/views/auction/   # layout, emisor, receptor, partials/lot, partials/history, partials/chat
 resources/js/              # auction.js, chat.js
 tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 ```
@@ -164,7 +181,7 @@ tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 - [x] **Hito 4 — Temporizador, cierre y anti-sniping:** cierre por vencimiento con adjudicación y descuento de saldo, anti-sniping, cierre manual del subastador idempotente, temporizador y resultado en las pantallas, y tests de concurrencia del cierre.
 - [x] **Hito 5 — Chat:** esquema de mensajes; `POST /auction/chat` para pujador y subastador con `ChatMessagePosted` tras el commit; historial por `GET /auction/chat` y moderación por `DELETE` con `ChatMessageDeleted`; panel compartido en vivo (historial por HTTP al cargar y al reconectar) y tests de concurrencia del chat contra PostgreSQL.
 - [x] **Hito 6 — Logging y trazabilidad:** canales `auction`/`audit` en JSON con rotación diaria, `correlation_id` de punta a punta (`X-Correlation-ID` en la respuesta) y auditoría de acciones con el `action_id` y el resultado.
-- [ ] **Hito 7 — Pulido y entrega.**
+- [x] **Hito 7 — Pulido y entrega:** historial de lotes cerrados en el snapshot público, estados de conexión con color y región viva, README de entrega y release `v1.0.0`.
 
 Cada hito es un milestone en GitHub; cada tarea, un issue; cada issue, una rama y un PR.
 
