@@ -103,6 +103,19 @@ class AuctionScreensTest extends TestCase
         }
     }
 
+    public function test_the_layout_shows_the_connection_state_with_a_live_region(): void
+    {
+        foreach (['/emisor', '/receptor'] as $uri) {
+            $this->get($uri)
+                ->assertOk()
+                ->assertSee('data-connection-status', escape: false)
+                ->assertSee('data-connection-dot', escape: false)
+                ->assertSee('role="status"', escape: false)
+                ->assertSee('aria-live="polite"', escape: false)
+                ->assertSee('Conectando…');
+        }
+    }
+
     public function test_both_screens_share_the_layout_and_navigation(): void
     {
         foreach (['/emisor', '/receptor'] as $uri) {
