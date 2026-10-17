@@ -149,6 +149,21 @@ class AuctionScriptGuardTest extends TestCase
     }
 
     /**
+     * El historial de lotes se dibuja desde el snapshot público (RF-13), con la
+     * lista ya ordenada y acotada por el servidor.
+     */
+    public function test_the_history_block_is_rendered_from_the_snapshot(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/auction.js')));
+
+        $this->assertStringContainsString("'[data-history]'", $code);
+        $this->assertStringContainsString("'[data-history-empty]'", $code);
+        $this->assertStringContainsString("'history' in snapshot", $code);
+        $this->assertStringContainsString('renderHistory(state.history)', $code);
+        $this->assertStringContainsString('dataset.historyItem', $code);
+    }
+
+    /**
      * El chat se carga desde `auction.js` como un módulo aparte.
      */
     public function test_the_auction_script_starts_the_chat(): void

@@ -92,6 +92,17 @@ class AuctionScreensTest extends TestCase
         }
     }
 
+    public function test_both_screens_carry_the_history_hooks_the_client_uses(): void
+    {
+        foreach (['/emisor', '/receptor'] as $uri) {
+            $this->get($uri)
+                ->assertOk()
+                ->assertSee('data-history', escape: false)
+                ->assertSee('data-history-empty', escape: false)
+                ->assertSee('Historial de lotes');
+        }
+    }
+
     public function test_both_screens_share_the_layout_and_navigation(): void
     {
         foreach (['/emisor', '/receptor'] as $uri) {
