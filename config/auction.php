@@ -72,6 +72,11 @@ return [
         'bids' => 10,
     ],
 
+    'history' => [
+        // Lotes cerrados que viajan en el snapshot público (RF-13).
+        'limit' => 10,
+    ],
+
     'audit' => [
         // Canal de log donde quedan las acciones (canales JSON, trazabilidad).
         'channel' => env('AUDIT_LOG_CHANNEL', 'audit'),

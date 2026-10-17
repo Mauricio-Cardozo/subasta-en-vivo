@@ -73,6 +73,8 @@
                     <li class="text-slate-600" data-bids-empty>Todavía no hay pujas.</li>
                 </ul>
             </section>
+
+            @include('auction.partials.history')
         </div>
 
         <div class="lg:col-span-2">
