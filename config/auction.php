@@ -81,4 +81,10 @@ return [
         // Canal de log donde quedan las acciones (canales JSON, trazabilidad).
         'channel' => env('AUDIT_LOG_CHANNEL', 'audit'),
     ],
+
+    'broadcast' => [
+        // Canal de log de los fallos de difusión: Reverb es best-effort y una
+        // caída no puede romper una acción ya confirmada (Tarea 1).
+        'log_channel' => env('BROADCAST_LOG_CHANNEL', 'auction'),
+    ],
 ];

@@ -3,9 +3,12 @@
 namespace App\Providers;
 
 use App\Services\SessionIdentity;
+use App\Support\Broadcasting\ResilientBroadcastManager;
 use App\Support\CorrelationId;
 use App\Support\RequestContext;
+use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -21,6 +24,16 @@ class AppServiceProvider extends ServiceProvider
         // middleware, la auditoría y los logs.
         $this->app->singleton(CorrelationId::class);
         $this->app->singleton(RequestContext::class);
+
+        // La difusión es best-effort: el emisor queda envuelto para que una
+        // caída de Reverb se registre y no rompa una acción ya confirmada. Va
+        // con `extend` y no con un binding propio: `BroadcastServiceProvider`
+        // es diferido y registra el manager recién al resolverlo, después de
+        // este `register`, así que el extender es el único que corre al final.
+        $this->app->extend(
+            BroadcastManager::class,
+            fn (BroadcastManager $manager, Application $app): ResilientBroadcastManager => new ResilientBroadcastManager($app),
+        );
     }
 
     /**
