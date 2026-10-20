@@ -56,6 +56,38 @@ La configuración de Reverb (`REVERB_*` y `VITE_REVERB_*`) vive en `.env`; el re
 
 Todo lo que se ve sale del servidor: si algo no llega por el canal, se recupera por HTTP al reconectar.
 
+## Probar con un túnel (otros dispositivos)
+
+Para que pujen desde celulares u otras redes hay que exponer **dos** puertos: la app (8000) y Reverb (8080). El navegador habla HTTP con la app y WebSocket con Reverb, así que los dos tienen que ser alcanzables desde afuera. Laravel, en cambio, publica en Reverb desde la misma máquina y sigue usando `localhost:8080`.
+
+```bash
+cloudflared tunnel --url http://localhost:8000   # → https://<tunel-app>.trycloudflare.com
+cloudflared tunnel --url http://localhost:8080   # → https://<tunel-reverb>.trycloudflare.com
+```
+
+(Con ngrok es igual: un túnel por puerto.) En `.env`:
+
+```dotenv
+APP_URL=https://<tunel-app>.trycloudflare.com
+TRUSTED_PROXIES=127.0.0.1             # confiar en las X-Forwarded-* del agente del túnel
+
+REVERB_HOST="localhost"               # Laravel → Reverb, en la misma máquina
+REVERB_PORT=8080
+REVERB_SCHEME=http
+
+VITE_REVERB_HOST=<tunel-reverb>.trycloudflare.com   # navegador → Reverb (wss://)
+VITE_REVERB_PORT=443
+VITE_REVERB_SCHEME=https
+```
+
+Después:
+
+1. `npm run build` (no `npm run dev`: el servidor de Vite solo existe en `localhost:5173`; si quedó `public/hot`, borralo). Vite escribe los `VITE_*` al compilar, así que hay que recompilar cada vez que cambia el túnel.
+2. `php artisan config:clear`, y levantar `php artisan serve` y `php artisan reverb:start`.
+3. Abrir `https://<tunel-app>.trycloudflare.com` y revisar en DevTools → Network → WS que la conexión vaya a `wss://<tunel-reverb>…/app/<key>`.
+
+Sin `TRUSTED_PROXIES` la página carga los assets con `http://` dentro de `https://` (el navegador los bloquea) y todos los visitantes comparten la IP `127.0.0.1`, así que los límites por IP (alta, PIN) se agotan entre todos. Fuera de un túnel o proxy dejalo vacío: confiar en cualquier `X-Forwarded-For` permitiría falsificar la IP.
+
 ## Tests y calidad
 
 ```bash
