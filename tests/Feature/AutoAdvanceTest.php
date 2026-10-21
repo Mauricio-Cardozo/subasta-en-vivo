@@ -68,6 +68,21 @@ class AutoAdvanceTest extends TestCase
         $this->assertSame('Siguiente', $state->json('queue.items.0.title'));
     }
 
+    public function test_the_state_read_opens_the_next_lot_exactly_when_the_pause_ends(): void
+    {
+        $this->freezeTime();
+        $queued = $this->queuedLot('Siguiente');
+
+        app(AuctionService::class)->closeCurrentLot();
+
+        // La pausa termina en `queue_opens_at` (incluido), igual que el lote
+        // vence en `ends_at`: en ese instante ya se abre el siguiente.
+        $this->travelTo($this->room->fresh()->queue_opens_at);
+
+        $this->getJson('/auction/state')->assertOk()->assertJsonPath('lot.title', 'Siguiente');
+        $this->assertSame(LotStatus::Open, $queued->fresh()->status);
+    }
+
     public function test_the_state_before_the_pause_ends_does_not_open_the_next_lot(): void
     {
         $queued = $this->queuedLot('Siguiente');

@@ -372,7 +372,7 @@ class AuctionService
 
         $closing = $openLot && $lot->hasExpired();
         $advancing = $room->queue_opens_at !== null
-            && $room->queue_opens_at->isPast()
+            && ! $room->queue_opens_at->isFuture()
             && ! $openLot;
 
         if (! $closing && ! $advancing) {
