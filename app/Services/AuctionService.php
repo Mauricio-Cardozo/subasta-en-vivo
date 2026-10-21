@@ -181,7 +181,7 @@ class AuctionService
             if (! $lot->isOpen()) {
                 // Si venció, para el pujador el motivo es el tiempo; si lo cerró
                 // el subastador, es que el lote ya no está abierto.
-                return $lot->ends_at->isPast()
+                return $lot->hasExpired()
                     ? ActionResult::rejected('lot_expired', 'Se terminó el tiempo del lote.')
                     : ActionResult::rejected('lot_closed', 'El lote ya está cerrado.');
             }
@@ -370,7 +370,7 @@ class AuctionService
         $lot = $room->currentLot;
         $openLot = $lot instanceof Lot && $lot->isOpen();
 
-        $closing = $openLot && $lot->ends_at->isPast();
+        $closing = $openLot && $lot->hasExpired();
         $advancing = $room->queue_opens_at !== null
             && $room->queue_opens_at->isPast()
             && ! $openLot;
@@ -424,7 +424,7 @@ class AuctionService
     {
         $lot = $this->lockCurrentLot($room);
 
-        if (! $lot instanceof Lot || ! $lot->isOpen() || ! $lot->ends_at->isPast()) {
+        if (! $lot instanceof Lot || ! $lot->isOpen() || ! $lot->hasExpired()) {
             return null;
         }
 

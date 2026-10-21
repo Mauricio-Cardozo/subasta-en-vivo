@@ -94,6 +94,16 @@ class Lot extends Model
     }
 
     /**
+     * El plazo terminó: el lote está abierto en `[started_at, ends_at)`, así que
+     * el fin está excluido y una puja que llega justo en `ends_at` ya es tarde
+     * (4.2). `isPast()` dejaría pasar ese instante.
+     */
+    public function hasExpired(): bool
+    {
+        return ! now()->lessThan($this->ends_at);
+    }
+
+    /**
      * Precio de referencia para la próxima puja: el actual si ya hay pujas
      * (4.1).
      */
