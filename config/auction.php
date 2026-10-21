@@ -40,6 +40,14 @@ return [
         'description' => ['max_length' => 200],
     ],
 
+    // Cola de lotes (Tarea 2): al cerrar un lote, el siguiente se abre solo.
+    'queue' => [
+        // Lotes esperando turno, sin contar el que está abierto.
+        'max' => 10,
+        // Pausa entre el cierre de un lote y la apertura del siguiente.
+        'gap_seconds' => 8,
+    ],
+
     // Anti-sniping (4.3): una puja aceptada dentro de la ventana final extiende
     // el cierre, con un tope para impedir subastas infinitas.
     'anti_sniping' => [
@@ -54,6 +62,7 @@ return [
         'chat_messages_per_second' => 1,
         'lot_opens_per_minute' => 10,
         'lot_closes_per_minute' => 10,
+        'lot_deletes_per_minute' => 10,
         // Altas de pujador y intentos de PIN por minuto.
         'join_per_minute' => 10,
         'host_login_per_minute' => 6,

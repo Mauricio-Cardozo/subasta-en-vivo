@@ -42,6 +42,8 @@ class AuctionSnapshot
             'bids' => $this->bids(),
             // Lotes ya cerrados, del más nuevo al más viejo (RF-13).
             'history' => $this->history(),
+            // Lotes esperando turno y la pausa hacia el siguiente (Tarea 2).
+            'queue' => $this->queue(),
             'action' => $action,
             'correlation_id' => $correlationId,
         ];
@@ -109,7 +111,8 @@ class AuctionSnapshot
      * Igual que el resto del snapshot, solo viajan campos públicos: título,
      * estado, precio final, nombre del ganador y cuándo cerró. Ni ids internos,
      * ni sesiones, ni saldos (RNF-07). `final_price_cents` es el precio al que
-     * quedó el lote (null si nunca tuvo pujas).
+     * quedó el lote (null si nunca tuvo pujas). Los lotes en cola y los quitados
+     * no son historial: solo lo vendido y lo que quedó sin vender.
      *
      * @return list<array<string, mixed>>
      */
@@ -122,7 +125,7 @@ class AuctionSnapshot
         }
 
         return $this->room->lots()
-            ->where('status', '!=', LotStatus::Open->value)
+            ->whereIn('status', [LotStatus::Sold->value, LotStatus::Unsold->value])
             ->with('winner')
             ->orderByDesc('id')
             ->limit($limit)
@@ -133,6 +136,48 @@ class AuctionSnapshot
                 'final_price_cents' => $lot->current_price_cents,
                 'winner_name' => $lot->winner?->name,
                 'closed_at' => $lot->closed_at?->toIso8601String(),
+            ])
+            ->all();
+    }
+
+    /**
+     * Cola de lotes que esperan turno (Tarea 2).
+     *
+     * `opens_at` marca cuándo abre el siguiente lote (la pausa posterior a un
+     * cierre) y `opens_in_ms` lo expresa contra la marca del servidor, igual
+     * que `remaining_ms` del lote (RF-08): el navegador no calcula con su
+     * reloj. Los items muestran solo título y precio base; la cola está
+     * acotada por `auction.queue.max`.
+     *
+     * @return array{opens_at: string|null, opens_in_ms: int|null, items: list<array<string, mixed>>}
+     */
+    private function queue(): array
+    {
+        $opensAt = $this->room?->queue_opens_at;
+
+        return [
+            'opens_at' => $opensAt?->toIso8601String(),
+            'opens_in_ms' => $opensAt === null
+                ? null
+                : max(0, $opensAt->getTimestampMs() - now()->getTimestampMs()),
+            'items' => $this->room instanceof AuctionRoom ? $this->queuedLots($this->room) : [],
+        ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function queuedLots(AuctionRoom $room): array
+    {
+        return $room->lots()
+            ->where('status', LotStatus::Queued->value)
+            ->orderBy('id')
+            ->limit((int) config('auction.queue.max'))
+            ->get()
+            ->map(fn (Lot $lot): array => [
+                'id' => $lot->id,
+                'title' => $lot->title,
+                'start_price_cents' => $lot->start_price_cents,
             ])
             ->all();
     }

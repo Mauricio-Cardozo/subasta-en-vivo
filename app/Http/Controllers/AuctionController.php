@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\CloseLotRequest;
 use App\Http\Requests\OpenLotRequest;
+use App\Models\Lot;
 use App\Models\Participant;
 use App\Services\ActionIdempotency;
 use App\Services\AuctionService;
@@ -88,33 +89,26 @@ class AuctionController extends Controller
     }
 
     /**
-     * Abre un lote (solo subastador).
+     * Abre un lote o lo suma a la cola (solo subastador).
+     *
+     * Idempotente por `action_id` (Tarea 2): un doble clic repite la respuesta
+     * original en lugar de encolar un lote duplicado. La respuesta dice
+     * `status: open` cuando abrió y `status: queued` cuando quedó en la cola.
      */
     public function openLot(OpenLotRequest $request): JsonResponse
     {
-        $result = $this->auction->openLot(
-            title: $request->string('title')->toString(),
-            description: $request->string('description')->toString() ?: null,
-            startPriceCents: (int) $request->validated('start_price_cents'),
-            minIncrementCents: $request->minIncrementCents(),
-            durationSeconds: $request->durationSeconds(),
+        return $this->idempotency->run(
+            $this->identity->actorKey($request),
+            $request->string('action_id')->toString(),
+            fn (): ActionResult => $this->auction->openLot(
+                title: $request->string('title')->toString(),
+                description: $request->string('description')->toString() ?: null,
+                startPriceCents: (int) $request->validated('start_price_cents'),
+                minIncrementCents: $request->minIncrementCents(),
+                durationSeconds: $request->durationSeconds(),
+            ),
+            event: 'auction.lot_open',
         );
-
-        $this->audit->record('auction.lot_open', [
-            'actor_key' => $this->identity->actorKey($request),
-            'outcome' => $result->ok ? 'accepted' : 'rejected',
-            'reason' => $result->reason,
-            'result' => $result->context,
-        ]);
-
-        if (! $result->ok) {
-            return response()->json([
-                'reason' => $result->reason,
-                'message' => $result->message,
-            ], 422);
-        }
-
-        return response()->json($result->context, 201);
     }
 
     /**
@@ -131,5 +125,42 @@ class AuctionController extends Controller
             fn (): ActionResult => $this->auction->closeCurrentLot(),
             event: 'auction.lot_close',
         );
+    }
+
+    /**
+     * Quita un lote de la cola (solo subastador, Tarea 2).
+     *
+     * No necesita `action_id`: repetir la baja de un lote ya quitado es un
+     * no-op por estado (misma respuesta, misma versión, sin evento). La
+     * auditoría lo registra como `replayed` para no contar dos bajas donde hubo
+     * una.
+     */
+    public function destroyLot(Request $request, Lot $lot): JsonResponse
+    {
+        // Para la auditoría: un lote que ya no estaba en cola repite la
+        // respuesta, no la transición.
+        $wasQueued = $lot->status->isQueued();
+
+        $result = $this->auction->dequeue($lot);
+
+        $this->audit->record('auction.lot_dequeued', [
+            'actor_key' => $this->identity->actorKey($request),
+            'outcome' => match (true) {
+                ! $result->ok => 'rejected',
+                $wasQueued => 'accepted',
+                default => 'replayed',
+            },
+            'reason' => $result->reason,
+            'result' => $result->context,
+        ]);
+
+        if (! $result->ok) {
+            return response()->json([
+                'reason' => $result->reason,
+                'message' => $result->message,
+            ], 422);
+        }
+
+        return response()->json($result->context);
     }
 }

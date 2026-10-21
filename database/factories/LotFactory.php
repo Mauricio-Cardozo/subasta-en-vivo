@@ -25,6 +25,7 @@ class LotFactory extends Factory
             'description' => null,
             'start_price_cents' => $startPrice,
             'min_increment_cents' => config('auction.lot.min_increment_cents'),
+            'duration_seconds' => config('auction.lot.duration_seconds'),
             'current_price_cents' => null,
             'leader_participant_id' => null,
             'status' => LotStatus::Open,
@@ -45,6 +46,18 @@ class LotFactory extends Factory
             'status' => LotStatus::Sold,
             'closed_at' => now(),
             'ends_at' => now()->subSecond(),
+        ]);
+    }
+
+    /**
+     * Lote esperando turno en la cola: sin inicio ni plazo todavía.
+     */
+    public function queued(): static
+    {
+        return $this->state(fn (): array => [
+            'status' => LotStatus::Queued,
+            'started_at' => null,
+            'ends_at' => null,
         ]);
     }
 

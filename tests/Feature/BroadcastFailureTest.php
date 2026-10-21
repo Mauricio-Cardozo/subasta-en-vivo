@@ -138,6 +138,7 @@ class BroadcastFailureTest extends TestCase
                 'description' => 'Funciona y anda bien',
                 'start_price_cents' => 5_000,
                 'duration_seconds' => 60,
+                'action_id' => 'apertura-1',
             ])
             ->assertCreated()
             ->assertHeader('X-Correlation-ID', 'cid-open-1')

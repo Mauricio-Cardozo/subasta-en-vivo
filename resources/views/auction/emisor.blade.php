@@ -8,7 +8,7 @@
             <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Abrir lote</h2>
                 <p class="mt-1 text-sm text-slate-500">
-                    Si ya hay un lote abierto, el servidor rechaza la apertura: primero hay que cerrarlo.
+                    Si ya hay un lote abierto, el lote nuevo espera en la cola y se abre solo al cerrar el anterior.
                 </p>
 
                 <form data-open-lot class="mt-4 grid gap-3 text-sm">

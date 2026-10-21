@@ -24,7 +24,12 @@ use Illuminate\Support\Facades\DB;
 class AuctionService
 {
     /**
-     * Abre un lote, si no hay otro abierto (RF-01).
+     * Abre un lote o lo suma a la cola (RF-01, Tarea 2).
+     *
+     * Sin lote abierto, sin cola y sin pausa pendiente, el lote abre en el acto
+     * (el comportamiento de siempre). Con lote abierto o lotes esperando turno,
+     * queda `queued`: el auto-avance lo abre cuando le toque. La cola es FIFO
+     * por `id` y tiene un tope configurable (`auction.queue.max`).
      */
     public function openLot(
         string $title,
@@ -37,18 +42,13 @@ class AuctionService
             $room = $this->lockRoom();
 
             // Cierre perezoso: si el lote anterior ya venció, se liquida antes de
-            // decidir si se puede abrir otro (no hay cron; el vencimiento se
+            // decidir si el nuevo abre o espera (no hay cron; el vencimiento se
             // resuelve dentro de cada acción).
             $this->closeLotIfDue($room);
 
-            if ($this->hasOpenLot($room)) {
-                return ActionResult::rejected(
-                    'lot_already_open',
-                    'Ya hay un lote abierto: cerralo antes de abrir otro.'
-                );
+            if ($this->hasOpenLot($room) || $this->hasQueuedLots($room) || $room->queue_opens_at !== null) {
+                return $this->enqueueLot($room, $title, $description, $startPriceCents, $minIncrementCents, $durationSeconds);
             }
-
-            $now = now();
 
             $lot = Lot::query()->create([
                 'room_id' => $room->id,
@@ -56,32 +56,100 @@ class AuctionService
                 'description' => $description,
                 'start_price_cents' => $startPriceCents,
                 'min_increment_cents' => $minIncrementCents,
+                'duration_seconds' => $durationSeconds,
                 'current_price_cents' => null,
-                'status' => LotStatus::Open,
-                'started_at' => $now,
-                'ends_at' => $now->copy()->addSeconds($durationSeconds),
+                'status' => LotStatus::Queued,
             ]);
 
-            // El puntero y el estado del lote se actualizan en la misma
-            // transacción: no pueden desincronizarse.
-            $room->forceFill([
-                'current_lot_id' => $lot->id,
-                'version' => $room->version + 1,
-            ])->save();
-
-            $room->load('currentLot.leader');
-
-            AuctionStateUpdated::dispatch(
-                (new AuctionSnapshot($room))->build(
-                    action: ['type' => 'lot_opened', 'summary' => "Se abrió el lote «{$lot->title}»"],
-                )
-            );
+            $lot = $this->startLot($room, $lot);
 
             return ActionResult::success([
                 'lot_id' => $lot->id,
+                'status' => LotStatus::Open->value,
                 'version' => $room->version,
             ]);
         });
+    }
+
+    /**
+     * Suma un lote a la cola, si el tope lo permite. Espera la sala bloqueada.
+     *
+     * Un lote encolado no tiene inicio ni plazo: los recibe recién al abrirse,
+     * con la duración elegida al cargarlo.
+     */
+    private function enqueueLot(
+        AuctionRoom $room,
+        string $title,
+        ?string $description,
+        int $startPriceCents,
+        int $minIncrementCents,
+        int $durationSeconds,
+    ): ActionResult {
+        if ($this->queuedLotCount($room) >= (int) config('auction.queue.max')) {
+            return ActionResult::rejected(
+                'queue_full',
+                'La cola está llena: esperá a que se abra un lote antes de cargar otro.'
+            );
+        }
+
+        $lot = Lot::query()->create([
+            'room_id' => $room->id,
+            'title' => $title,
+            'description' => $description,
+            'start_price_cents' => $startPriceCents,
+            'min_increment_cents' => $minIncrementCents,
+            'duration_seconds' => $durationSeconds,
+            'current_price_cents' => null,
+            'status' => LotStatus::Queued,
+        ]);
+
+        $room->forceFill(['version' => $room->version + 1])->save();
+        $room->load('currentLot.leader');
+
+        AuctionStateUpdated::dispatch(
+            (new AuctionSnapshot($room))->build(
+                action: ['type' => 'lot_queued', 'summary' => "Se sumó a la cola el lote «{$lot->title}»"],
+            )
+        );
+
+        return ActionResult::success([
+            'lot_id' => $lot->id,
+            'status' => LotStatus::Queued->value,
+            'version' => $room->version,
+        ]);
+    }
+
+    /**
+     * Abre un lote (nuevo o encolado): le pone inicio y plazo, lo vuelve el
+     * lote actual de la sala y publica la transición. Espera la sala bloqueada.
+     */
+    private function startLot(AuctionRoom $room, Lot $lot): Lot
+    {
+        $now = now();
+
+        $lot->forceFill([
+            'status' => LotStatus::Open,
+            'started_at' => $now,
+            'ends_at' => $now->copy()->addSeconds($lot->duration_seconds),
+        ])->save();
+
+        // El puntero, la pausa y la versión se actualizan en la misma
+        // transacción: no pueden desincronizarse.
+        $room->forceFill([
+            'current_lot_id' => $lot->id,
+            'queue_opens_at' => null,
+            'version' => $room->version + 1,
+        ])->save();
+
+        $room->load('currentLot.leader');
+
+        AuctionStateUpdated::dispatch(
+            (new AuctionSnapshot($room))->build(
+                action: ['type' => 'lot_opened', 'summary' => "Se abrió el lote «{$lot->title}»"],
+            )
+        );
+
+        return $lot;
     }
 
     /**
@@ -227,23 +295,122 @@ class AuctionService
     }
 
     /**
-     * Cierre perezoso desde la lectura de estado (RF-09).
+     * Quita un lote de la cola a pedido del subastador (Tarea 2).
      *
-     * Se hace una comprobación barata sin bloquear; solo si de verdad hay un
-     * lote vencido sin cerrar se abre la transacción que lo liquida. Así el
-     * `GET /auction/state` no paga un `lockForUpdate` en cada petición.
+     * Solo se quitan lotes que todavía esperan turno: pasan a `cancelled` (no
+     * se borra la fila; queda la traza). Repetir la baja de un lote ya quitado
+     * no vuelve a transicionar: misma respuesta, misma versión, sin evento.
+     */
+    public function dequeue(Lot $lot): ActionResult
+    {
+        return DB::transaction(function () use ($lot): ActionResult {
+            $room = $this->lockRoom();
+            $locked = Lot::query()->whereKey($lot->id)->lockForUpdate()->first();
+
+            if (! $locked instanceof Lot || $locked->room_id !== $room->id) {
+                return ActionResult::rejected('lot_not_found', 'Ese lote no está en la sala.');
+            }
+
+            if ($locked->status === LotStatus::Cancelled) {
+                return ActionResult::success([
+                    'lot_id' => $locked->id,
+                    'status' => LotStatus::Cancelled->value,
+                    'version' => $room->version,
+                ]);
+            }
+
+            if (! $locked->status->isQueued()) {
+                return ActionResult::rejected(
+                    'lot_not_queued',
+                    'Solo se pueden quitar lotes que todavía esperan en la cola.'
+                );
+            }
+
+            $locked->forceFill([
+                'status' => LotStatus::Cancelled,
+                'closed_at' => now(),
+            ])->save();
+
+            // Si la cola quedó vacía, la pausa pendiente ya no lleva a nadie.
+            $room->forceFill([
+                'queue_opens_at' => $this->hasQueuedLots($room) ? $room->queue_opens_at : null,
+                'version' => $room->version + 1,
+            ])->save();
+
+            AuctionStateUpdated::dispatch(
+                (new AuctionSnapshot($room))->build(
+                    action: ['type' => 'lot_dequeued', 'summary' => "Se quitó de la cola «{$locked->title}»"],
+                )
+            );
+
+            return ActionResult::success([
+                'lot_id' => $locked->id,
+                'status' => LotStatus::Cancelled->value,
+                'version' => $room->version,
+            ]);
+        });
+    }
+
+    /**
+     * Cierre y avance perezosos desde la lectura de estado (RF-09, Tarea 2).
+     *
+     * Se hace una comprobación barata sin bloquear; solo si de verdad hay algo
+     * que resolver —un lote vencido o la pausa de la cola cumplida— se abre la
+     * transacción que lo aplica. Así el `GET /auction/state` no paga un
+     * `lockForUpdate` en cada petición.
      */
     public function settleIfDue(): void
     {
-        $lot = $this->room()?->currentLot;
+        $room = $this->room();
 
-        if (! $lot instanceof Lot || ! $lot->isOpen() || ! $lot->hasExpired()) {
+        if (! $room instanceof AuctionRoom) {
+            return;
+        }
+
+        $lot = $room->currentLot;
+        $openLot = $lot instanceof Lot && $lot->isOpen();
+
+        $closing = $openLot && $lot->hasExpired();
+        $advancing = $room->queue_opens_at !== null
+            && ! $room->queue_opens_at->isFuture()
+            && ! $openLot;
+
+        if (! $closing && ! $advancing) {
             return;
         }
 
         DB::transaction(function (): void {
-            $this->closeLotIfDue($this->lockRoom());
+            $room = $this->lockRoom();
+
+            $this->closeLotIfDue($room);
+            $this->advanceQueueIfDue($room);
         });
+    }
+
+    /**
+     * Abre el siguiente lote de la cola cuando la pausa ya venció (Tarea 2).
+     *
+     * Espera la sala bloqueada. Es idempotente: con un lote abierto no hace
+     * nada, y si la cola quedó vacía no hay a quién abrir.
+     */
+    private function advanceQueueIfDue(AuctionRoom $room): ?Lot
+    {
+        if ($this->hasOpenLot($room)) {
+            return null;
+        }
+
+        $next = $this->nextQueuedLot($room);
+
+        if (! $next instanceof Lot) {
+            return null;
+        }
+
+        // Sin pausa pendiente se abre enseguida; con pausa, recién al vencer.
+        if ($room->queue_opens_at !== null && $room->queue_opens_at->isFuture()) {
+            return null;
+        }
+
+        return $this->startLot($room, $next);
     }
 
     /**
@@ -294,7 +461,14 @@ class AuctionService
             $summary = "Se cerró el lote «{$lot->title}» sin pujas";
         }
 
-        $room->forceFill(['version' => $room->version + 1])->save();
+        // El cierre y la pausa hacia el siguiente lote son una sola transición:
+        // sin lotes en cola no hay pausa (se puede cargar el próximo enseguida).
+        $room->forceFill([
+            'queue_opens_at' => $this->hasQueuedLots($room)
+                ? now()->addSeconds((int) config('auction.queue.gap_seconds'))
+                : null,
+            'version' => $room->version + 1,
+        ])->save();
         $room->load('currentLot.leader', 'currentLot.winner');
 
         AuctionStateUpdated::dispatch(
@@ -376,5 +550,31 @@ class AuctionService
             ->where('status', LotStatus::Open->value)
             ->lockForUpdate()
             ->exists();
+    }
+
+    private function hasQueuedLots(AuctionRoom $room): bool
+    {
+        return $room->lots()
+            ->where('status', LotStatus::Queued->value)
+            ->exists();
+    }
+
+    private function queuedLotCount(AuctionRoom $room): int
+    {
+        return $room->lots()
+            ->where('status', LotStatus::Queued->value)
+            ->count();
+    }
+
+    /**
+     * Lote que sigue en la cola (FIFO por `id`), bloqueado para escribir.
+     */
+    private function nextQueuedLot(AuctionRoom $room): ?Lot
+    {
+        return $room->lots()
+            ->where('status', LotStatus::Queued->value)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->first();
     }
 }
