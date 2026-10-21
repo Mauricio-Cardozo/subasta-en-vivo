@@ -8,6 +8,10 @@ Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](h
 
 - Soporte para probar con un túnel (cloudflared, ngrok): `config/trustedproxy.php` lee `TRUSTED_PROXIES` para confiar en las cabeceras `X-Forwarded-*` del agente local. Sin eso, detrás de un túnel HTTPS los assets salían con `http://` (bloqueados por contenido mixto) y todos los visitantes compartían la IP `127.0.0.1` en los límites por IP. README: sección **Probar con un túnel**.
 
+### Corregido
+
+- Una puja que llegaba **exactamente** en `ends_at` se aceptaba (y extendía el cierre por anti-sniping), y `GET /auction/state` no cerraba el lote en ese instante. El plazo se comparaba con `isPast()`, que es falso justo en `ends_at`; ahora `Lot::hasExpired()` respeta el intervalo `[started_at, ends_at)` de la sección 4.2 del plan.
+
 ## [1.0.0] - 2026-10-17
 
 Hito 7: pulido y entrega.

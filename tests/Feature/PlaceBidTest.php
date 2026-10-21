@@ -166,6 +166,32 @@ class PlaceBidTest extends TestCase
         $this->assertSame('lot_expired', $result->reason);
     }
 
+    public function test_a_bid_one_millisecond_before_the_deadline_is_accepted(): void
+    {
+        $this->freezeTime();
+        $lot = $this->openLot(['ends_at' => now()->addSeconds(30)]);
+
+        $this->travelTo($lot->ends_at->copy()->subMillisecond());
+        $result = $this->auction->placeBid($this->bidder());
+
+        $this->assertTrue($result->ok);
+    }
+
+    public function test_a_bid_exactly_at_the_deadline_is_rejected_and_settles_the_lot(): void
+    {
+        $this->freezeTime();
+        $lot = $this->openLot(['ends_at' => now()->addSeconds(30)]);
+
+        // El fin está excluido (4.2): ni se acepta ni extiende el cierre.
+        $this->travelTo($lot->ends_at);
+        $result = $this->auction->placeBid($this->bidder());
+
+        $this->assertFalse($result->ok);
+        $this->assertSame('lot_expired', $result->reason);
+        $this->assertSame(0, $lot->fresh()->extensions);
+        $this->assertSame(LotStatus::Unsold, $lot->fresh()->status);
+    }
+
     public function test_every_accepted_bid_bumps_the_version_exactly_once(): void
     {
         $lot = $this->openLot(['start_price_cents' => 1_000, 'min_increment_cents' => 100]);

@@ -147,6 +147,16 @@ class CloseLotTest extends TestCase
         $this->assertSame(99_000, $ana->fresh()->balance_cents);
     }
 
+    public function test_the_state_read_closes_the_lot_exactly_at_its_deadline(): void
+    {
+        $this->freezeTime();
+        $lot = $this->openLot(['ends_at' => now()->addSeconds(30)]);
+
+        $this->travelTo($lot->ends_at);
+
+        $this->getJson('/auction/state')->assertOk()->assertJsonPath('lot.status', 'unsold');
+    }
+
     public function test_the_state_read_leaves_a_live_lot_open(): void
     {
         $this->openLot(['ends_at' => now()->addMinute()]);
