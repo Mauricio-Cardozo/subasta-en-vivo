@@ -23,6 +23,9 @@ return new class extends Migration
     {
         Schema::table('auction_actions', function (Blueprint $table) {
             $table->string('action_id', 64)->nullable()->change();
+            // `session:` + sha256 (72 caracteres) para quien todavía no tiene
+            // identidad: con 64, PostgreSQL rechaza la fila de su denegación.
+            $table->string('actor_key', 100)->change();
 
             $table->string('type', 32)->default('action')->after('id');
             $table->foreignId('participant_id')->nullable()->after('type')
@@ -49,12 +52,13 @@ return new class extends Migration
             $table->dropColumn(['type', 'ip', 'payload', 'payload_hash', 'accepted', 'reason', 'correlation_id']);
         });
 
-        // El esquema viejo exige `action_id`: las filas de solo auditoría no
-        // tienen y se descartan.
+        // El esquema viejo exige `action_id` y una `actor_key` de hasta 64: las
+        // filas de solo auditoría no entran y se descartan.
         DB::table('auction_actions')->whereNull('action_id')->delete();
 
         Schema::table('auction_actions', function (Blueprint $table) {
             $table->string('action_id', 64)->nullable(false)->change();
+            $table->string('actor_key', 64)->change();
         });
     }
 };
