@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Events\ChatMessageDeleted;
+use App\Models\AuctionAction;
 use App\Models\AuctionRoom;
 use App\Models\ChatMessage;
 use App\Models\Participant;
@@ -97,7 +98,8 @@ class ChatModerationTest extends TestCase
 
         $this->deleteJson("/auction/chat/{$id}")->assertNoContent();
 
-        $this->assertDatabaseMissing('chat_messages', ['id' => $id]);
+        // Borrado lógico (6): la fila queda para la auditoría.
+        $this->assertSoftDeleted('chat_messages', ['id' => $id]);
         Event::assertDispatched(
             ChatMessageDeleted::class,
             fn (ChatMessageDeleted $event): bool => $event->messageId === $id
@@ -114,7 +116,7 @@ class ChatModerationTest extends TestCase
 
         $this->deleteJson("/auction/chat/{$message->id}")->assertNoContent();
 
-        $this->assertDatabaseMissing('chat_messages', ['id' => $message->id]);
+        $this->assertSoftDeleted('chat_messages', ['id' => $message->id]);
         Event::assertDispatched(ChatMessageDeleted::class);
     }
 
@@ -149,5 +151,42 @@ class ChatModerationTest extends TestCase
         $this->loginHost();
 
         $this->deleteJson('/auction/chat/999999')->assertNotFound();
+    }
+
+    public function test_the_history_after_an_id_returns_only_the_newer_messages(): void
+    {
+        $ana = Participant::factory()->create(['name' => 'Ana']);
+        $first = $this->messageFrom($ana, 'Uno');
+        $this->messageFrom($ana, 'Dos');
+        $this->messageFrom($ana, 'Tres');
+
+        $this->getJson("/auction/chat?after_id={$first->id}")
+            ->assertOk()
+            ->assertHeader('Cache-Control', 'no-store, private')
+            ->assertJsonPath('messages.*.body', ['Dos', 'Tres']);
+
+        $this->getJson('/auction/chat?after_id=abc')->assertStatus(422);
+    }
+
+    public function test_a_moderated_message_leaves_the_history_but_stays_audited(): void
+    {
+        $ana = Participant::factory()->create(['name' => 'Ana']);
+        $message = $this->messageFrom($ana, 'Fuera de tono');
+        $this->messageFrom($ana, 'Perdón');
+
+        $this->loginHost();
+        $this->deleteJson("/auction/chat/{$message->id}")->assertNoContent();
+
+        $this->getJson('/auction/chat')->assertJsonPath('messages.*.body', ['Perdón']);
+
+        // Borrado lógico: la fila sigue y el borrado queda en la auditoría.
+        $this->assertNotNull(ChatMessage::withTrashed()->find($message->id)->deleted_at);
+        $this->assertSame(
+            ['message_id' => $message->id],
+            AuctionAction::query()->where('type', 'chat_delete')->sole()->payload,
+        );
+
+        // Ya moderado, no se puede volver a borrar.
+        $this->deleteJson("/auction/chat/{$message->id}")->assertNotFound();
     }
 }

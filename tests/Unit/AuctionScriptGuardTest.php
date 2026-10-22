@@ -288,4 +288,14 @@ class AuctionScriptGuardTest extends TestCase
         $this->assertStringContainsString('request(endpoints.chat', $code);
         $this->assertStringContainsString("'state_change'", $code);
     }
+
+    /**
+     * El mensaje lleva un `action_id`: un reintento de red no lo duplica (6).
+     */
+    public function test_the_chat_message_carries_an_action_id(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/chat.js')));
+
+        $this->assertStringContainsString('JSON.stringify({ body, action_id: newActionId() })', $code);
+    }
 }
