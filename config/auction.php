@@ -91,6 +91,12 @@ return [
         'channel' => env('AUDIT_LOG_CHANNEL', 'audit'),
     ],
 
+    'log' => [
+        // Transiciones de la subasta (lot.opened, bid.accepted, lot.extended,
+        // lot.closed), escritas recién después del commit (7).
+        'channel' => env('AUCTION_LOG_CHANNEL', 'auction'),
+    ],
+
     'broadcast' => [
         // Canal de log de los fallos de difusión: Reverb es best-effort y una
         // caída no puede romper una acción ya confirmada (Tarea 1).

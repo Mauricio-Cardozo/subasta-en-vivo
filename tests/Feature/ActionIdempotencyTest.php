@@ -97,6 +97,44 @@ class ActionIdempotencyTest extends TestCase
         $this->assertSame(2, $calls);
     }
 
+    public function test_without_an_action_id_it_runs_every_time_and_is_audited(): void
+    {
+        $calls = 0;
+        $action = function () use (&$calls): ActionResult {
+            $calls++;
+
+            return ActionResult::success();
+        };
+
+        $this->guard->run('host:abc', null, $action, type: 'close_lot');
+        $this->guard->run('host:abc', '', $action, type: 'close_lot');
+
+        $this->assertSame(2, $calls);
+        $this->assertSame(2, AuctionAction::query()->where('type', 'close_lot')->whereNull('action_id')->count());
+    }
+
+    public function test_reusing_an_action_id_with_another_payload_is_rejected(): void
+    {
+        $calls = 0;
+        $action = function () use (&$calls): ActionResult {
+            $calls++;
+
+            return ActionResult::success();
+        };
+
+        $this->guard->run('participant:1', 'a1', $action, payload: ['amount_cents' => 100]);
+        $response = $this->guard->run('participant:1', 'a1', $action, payload: ['amount_cents' => 200]);
+
+        $this->assertSame(1, $calls);
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertSame('action_id_reused', $response->getData(true)['reason']);
+
+        // El orden de las claves no cambia la huella: esto sí es un reintento.
+        $replay = $this->guard->run('participant:1', 'a1', $action, payload: ['amount_cents' => 100]);
+        $this->assertSame(201, $replay->getStatusCode());
+        $this->assertSame(1, $calls);
+    }
+
     public function test_an_unexpected_error_releases_the_claim(): void
     {
         try {

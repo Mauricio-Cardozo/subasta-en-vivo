@@ -10,9 +10,10 @@ use Illuminate\Foundation\Http\FormRequest;
  * El incremento mínimo y la duración son opcionales: si no vienen, se usan los
  * valores del balance (config/auction.php). Los montos llegan en centavos.
  *
- * `action_id` hace idempotente la apertura (Tarea 2): si ya hay un lote abierto
- * o lotes en cola, el mismo envío repetido (un doble clic, por ejemplo) repite
- * la respuesta original en lugar de sumar un duplicado a la cola.
+ * `action_id` (opcional, RNF-05) hace idempotente la apertura (Tarea 2): si
+ * ya hay un lote abierto o lotes en cola, el mismo envío repetido (un doble
+ * clic, por ejemplo) repite la respuesta original en lugar de sumar un
+ * duplicado a la cola.
  */
 class OpenLotRequest extends FormRequest
 {
@@ -30,7 +31,7 @@ class OpenLotRequest extends FormRequest
         $descriptionMax = config('auction.lot.description.max_length');
 
         return [
-            'action_id' => ['required', 'string', 'max:64'],
+            'action_id' => ['nullable', 'string', 'max:64'],
             'title' => ['required', 'string', "max:{$titleMax}"],
             'description' => ['nullable', 'string', "max:{$descriptionMax}"],
             'start_price_cents' => ['required', 'integer', 'min:1'],
@@ -45,7 +46,6 @@ class OpenLotRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'action_id.required' => 'Falta el identificador de la acción.',
             'title.required' => 'El lote necesita un título.',
             'title.max' => 'El título es demasiado largo.',
             'start_price_cents.required' => 'Indicá el precio inicial.',

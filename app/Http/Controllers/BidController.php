@@ -14,7 +14,8 @@ use Illuminate\Http\JsonResponse;
  * Puja de un participante con identidad (RF-04).
  *
  * El efecto lo aplica `AuctionService`; acá solo se resuelve la identidad y se
- * envuelve la acción con el guard de idempotencia (4.7).
+ * envuelve la acción con el registro de acciones: auditoría (RF-15) e
+ * idempotencia por `action_id` (4.7).
  */
 class BidController extends Controller
 {
@@ -29,11 +30,16 @@ class BidController extends Controller
         /** @var Participant $participant */
         $participant = $this->identity->participant($request);
 
+        $amount = $request->amountCents();
+
         return $this->idempotency->run(
             $this->identity->actorKey($request),
-            $request->string('action_id')->toString(),
-            fn (): ActionResult => $this->auction->placeBid($participant, $request->amountCents()),
+            $request->validated('action_id'),
+            fn (): ActionResult => $this->auction->placeBid($participant, $amount),
             event: 'auction.bid',
+            type: 'bid',
+            payload: ['amount_cents' => $amount],
+            participantId: $participant->id,
         );
     }
 }
