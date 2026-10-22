@@ -56,8 +56,9 @@
 
                         <label class="grid gap-1">
                             <span class="text-slate-400">Tu oferta (pesos)</span>
-                            <input type="number" name="amount" data-bid-amount inputmode="decimal"
-                                   min="0.01" step="0.01" required
+                            {{-- Texto y no `number`: acepta coma o punto en cualquier idioma del navegador. --}}
+                            <input type="text" name="amount" data-bid-amount inputmode="decimal"
+                                   autocomplete="off" required
                                    class="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 focus:border-amber-400 focus:outline-none">
                         </label>
 

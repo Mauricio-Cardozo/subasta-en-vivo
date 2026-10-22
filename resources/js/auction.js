@@ -445,8 +445,6 @@ function renderBidForm() {
     const input = find(selectors.bidAmount);
 
     if (input && minimum !== null) {
-        input.min = centsToInput(minimum);
-
         // Sugerencia: el mínimo, salvo que el pujador ya haya escrito un monto
         // que todavía alcanza. La validación real es la del servidor.
         const typed = inputToCents(input.value);
@@ -465,9 +463,9 @@ function renderBidForm() {
     }
 }
 
-/** Centavos enteros → texto del campo en pesos ("12.50"). */
+/** Centavos enteros → texto del campo en pesos, con coma ("12,50"). */
 function centsToInput(cents) {
-    return (cents / 100).toFixed(2);
+    return `${Math.trunc(cents / 100)},${String(cents % 100).padStart(2, '0')}`;
 }
 
 /**
