@@ -40,18 +40,27 @@
             @if ($viewer ?? null)
                 {{--
                     El formulario existe porque la sesión ya tiene un nombre. El JS solo lo
-                    muestra cuando hay un lote abierto y no sos el líder, y manda únicamente
-                    un `action_id`: la puja efectiva la calcula el servidor (RF-04).
+                    muestra cuando hay un lote abierto y no sos el líder. El pujador propone
+                    un monto (RF-03) y el servidor lo valida contra el mínimo y el saldo:
+                    el navegador nunca decide si la puja vale (RNF-01).
                 --}}
                 <section data-bid-section hidden class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
                     <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Puja</h2>
                     <p class="mt-1 text-sm text-slate-500">
-                        El botón pone la puja mínima que saldría del servidor; el monto no lo
-                        elige tu navegador.
+                        Ofrecé cualquier monto desde la puja mínima. El servidor lo valida con
+                        el precio y tu saldo al momento de recibirlo.
                     </p>
 
                     <form data-bid class="mt-4 grid gap-3 text-sm">
                         <p class="font-mono text-2xl font-semibold text-amber-300" data-bid-minimum>—</p>
+
+                        <label class="grid gap-1">
+                            <span class="text-slate-400">Tu oferta (pesos)</span>
+                            {{-- Texto y no `number`: acepta coma o punto en cualquier idioma del navegador. --}}
+                            <input type="text" name="amount" data-bid-amount inputmode="decimal"
+                                   autocomplete="off" required
+                                   class="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-slate-100 focus:border-amber-400 focus:outline-none">
+                        </label>
 
                         <p data-form-error hidden class="rounded-md border border-rose-800 bg-rose-950/40 px-3 py-2 text-rose-300"></p>
 
@@ -73,6 +82,8 @@
                     <li class="text-slate-600" data-bids-empty>Todavía no hay pujas.</li>
                 </ul>
             </section>
+
+            @include('auction.partials.presence')
 
             @include('auction.partials.history')
         </div>

@@ -16,7 +16,8 @@
             </div>
 
             <nav class="flex items-center gap-1 text-sm">
-                @foreach (['auction.emisor' => 'Subastador', 'auction.receptor' => 'Pujador'] as $route => $label)
+                @php($links = ['auction.emisor' => 'Subastador', 'auction.receptor' => 'Pujador'] + (($isHost ?? false) ? ['admin' => 'Panel'] : []))
+                @foreach ($links as $route => $label)
                     <a href="{{ route($route) }}"
                        @class([
                            'rounded-md px-3 py-1.5 transition',

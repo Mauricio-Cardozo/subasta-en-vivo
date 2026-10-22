@@ -26,6 +26,8 @@ class ChatMessageRequest extends FormRequest
 
         return [
             'body' => ['required', 'string', "max:{$max}"],
+            // Opcional (RNF-05): evita duplicar el mensaje si la red reintenta.
+            'action_id' => ['nullable', 'string', 'max:64'],
         ];
     }
 

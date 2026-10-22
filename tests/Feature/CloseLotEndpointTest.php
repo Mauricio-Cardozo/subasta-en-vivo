@@ -87,13 +87,12 @@ class CloseLotEndpointTest extends TestCase
         $this->assertSame(1, $this->lot->fresh()->room->version);
     }
 
-    public function test_action_id_is_required(): void
+    public function test_action_id_is_optional(): void
     {
         $this->asHost();
 
-        $this->postJson('/auction/lots/close', [])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('action_id');
+        // RNF-05: sin `action_id` el cierre corre igual.
+        $this->postJson('/auction/lots/close', [])->assertCreated();
     }
 
     public function test_the_same_action_id_does_not_close_twice(): void
@@ -109,7 +108,9 @@ class CloseLotEndpointTest extends TestCase
         $this->assertSame($first->json(), $second->json());
         $this->assertSame(95_000, $ana->fresh()->balance_cents);
         $this->assertSame(2, $this->lot->fresh()->room->version);
-        $this->assertSame(1, AuctionAction::query()->count());
+        // Una acción del subastador y una sola transición de cierre.
+        $this->assertSame(1, AuctionAction::query()->where('type', 'close_lot')->count());
+        $this->assertSame(1, AuctionAction::query()->where('type', 'lot_closed')->count());
     }
 
     public function test_the_close_endpoint_is_rate_limited(): void

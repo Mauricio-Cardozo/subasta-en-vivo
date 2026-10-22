@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\LotStatus;
 use App\Events\AuctionStateUpdated;
+use App\Models\AuctionAction;
 use App\Models\AuctionRoom;
 use App\Models\Bid;
 use App\Models\Lot;
@@ -11,6 +12,7 @@ use App\Models\Participant;
 use App\Support\ActionResult;
 use App\Support\Money;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Única autoridad de la subasta (regla de oro del proyecto).
@@ -143,6 +145,13 @@ class AuctionService
 
         $room->load('currentLot.leader');
 
+        $this->logAfterCommit('lot.opened', [
+            'lot_id' => $lot->id,
+            'title' => $lot->title,
+            'start_price_cents' => $lot->start_price_cents,
+            'duration_seconds' => $lot->duration_seconds,
+        ]);
+
         AuctionStateUpdated::dispatch(
             (new AuctionSnapshot($room))->build(
                 action: ['type' => 'lot_opened', 'summary' => "Se abrió el lote «{$lot->title}»"],
@@ -186,10 +195,8 @@ class AuctionService
                     : ActionResult::rejected('lot_closed', 'El lote ya está cerrado.');
             }
 
-            if ($lot->leader_participant_id === $participant->id) {
-                return ActionResult::rejected('already_leading', 'Ya vas ganando este lote.');
-            }
-
+            // Orden de validación del plan (4.1): el primer fallo define el
+            // motivo. Cerrado → monto bajo → ya es líder → saldo.
             $minimum = $this->minimumBidCents($lot);
             $amount = $amountCents ?? $minimum;
 
@@ -199,6 +206,10 @@ class AuctionService
                     'La puja mínima es '.Money::format($minimum).'.',
                     ['minimum_cents' => $minimum],
                 );
+            }
+
+            if ($lot->leader_participant_id === $participant->id) {
+                return ActionResult::rejected('already_leading', 'Ya vas ganando este lote.');
             }
 
             if (! $participant->canAfford($amount)) {
@@ -215,6 +226,8 @@ class AuctionService
                 'amount_cents' => $amount,
             ]);
 
+            $previousLeader = $lot->leader_participant_id;
+
             $lot->forceFill([
                 'current_price_cents' => $amount,
                 'leader_participant_id' => $participant->id,
@@ -223,6 +236,14 @@ class AuctionService
             // Anti-sniping: una puja aceptada en la ventana final corre el
             // cierre. La extensión y la puja son una sola transición (4.3).
             $extended = $this->applyAntiSniping($lot);
+
+            $this->logAfterCommit('bid.accepted', [
+                'participant_id' => $participant->id,
+                'lot_id' => $lot->id,
+                'amount_cents' => $amount,
+                'previous_leader_id' => $previousLeader,
+                'extended' => $extended,
+            ]);
 
             $room->forceFill(['version' => $room->version + 1])->save();
             $room->load('currentLot.leader');
@@ -280,7 +301,7 @@ class AuctionService
                 return ActionResult::rejected('no_open_lot', 'No hay ningún lote abierto.');
             }
 
-            $this->settle($room, $lot);
+            $this->settle($room, $lot, cause: 'manual');
 
             $closed = $room->currentLot;
 
@@ -428,14 +449,14 @@ class AuctionService
             return null;
         }
 
-        return $this->settle($room, $lot);
+        return $this->settle($room, $lot, cause: 'time');
     }
 
     /**
      * Liquida un lote abierto: decide ganador, descuenta saldo y sube la versión
      * una sola vez (RF-05). Espera la sala y el lote bloqueados.
      */
-    private function settle(AuctionRoom $room, Lot $lot): Lot
+    private function settle(AuctionRoom $room, Lot $lot, string $cause): Lot
     {
         $leader = $lot->leader;
         $price = $lot->current_price_cents;
@@ -471,6 +492,19 @@ class AuctionService
         ])->save();
         $room->load('currentLot.leader', 'currentLot.winner');
 
+        // El cierre es una transición propia aunque lo dispare una acción
+        // rechazada (4.5): su fila de auditoría viaja en la misma transacción.
+        $closed = [
+            'lot_id' => $lot->id,
+            'status' => $lot->status->value,
+            'winner' => $lot->winner?->name,
+            'price_cents' => $lot->status === LotStatus::Sold ? $price : null,
+            'cause' => $cause,
+        ];
+
+        AuctionAction::recordSystem('lot_closed', $closed);
+        $this->logAfterCommit('lot.closed', $closed);
+
         AuctionStateUpdated::dispatch(
             (new AuctionSnapshot($room))->build(
                 action: ['type' => 'lot_closed', 'summary' => $summary],
@@ -478,6 +512,17 @@ class AuctionService
         );
 
         return $lot;
+    }
+
+    /**
+     * Línea en el canal de la subasta (7), recién cuando la transacción
+     * confirma: un log nunca cuenta una transición que se revirtió.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function logAfterCommit(string $event, array $context): void
+    {
+        DB::afterCommit(fn () => Log::channel(config('auction.log.channel'))->info($event, $context));
     }
 
     /**
@@ -508,6 +553,12 @@ class AuctionService
             ),
             'extensions' => $lot->extensions + 1,
         ])->save();
+
+        $this->logAfterCommit('lot.extended', [
+            'lot_id' => $lot->id,
+            'ends_at' => $lot->ends_at->toIso8601String(),
+            'extensions' => $lot->extensions,
+        ]);
 
         return true;
     }

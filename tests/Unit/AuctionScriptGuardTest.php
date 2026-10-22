@@ -100,15 +100,19 @@ class AuctionScriptGuardTest extends TestCase
      * la información que tiene en la transacción. Solo viaja un `action_id`
      * nuevo por intento, que es lo que hace la acción idempotente.
      */
-    public function test_the_bid_request_carries_only_an_action_id(): void
+    public function test_the_bid_request_proposes_an_integer_amount(): void
     {
         $code = $this->code(file_get_contents(resource_path('js/auction.js')));
 
         $this->assertStringContainsString(
-            'postJson(endpoints.bid, { action_id: newActionId() })',
+            'postJson(endpoints.bid, { action_id: newActionId(), amount_cents: amountCents })',
             $code,
-            'La puja debe ir solo con un action_id: el monto lo decide el servidor.'
+            'La puja propone un monto (RF-03) y lleva un action_id para los reintentos.'
         );
+
+        // Los centavos salen de partir el texto, no de multiplicar un float.
+        $this->assertStringContainsString('function inputToCents(value)', $code);
+        $this->assertStringNotContainsString('* 100)', $code);
     }
 
     /**
@@ -283,5 +287,31 @@ class AuctionScriptGuardTest extends TestCase
         $this->assertStringContainsString('loadChat()', $code);
         $this->assertStringContainsString('request(endpoints.chat', $code);
         $this->assertStringContainsString("'state_change'", $code);
+    }
+
+    /**
+     * El mensaje lleva un `action_id`: un reintento de red no lo duplica (6).
+     */
+    public function test_the_chat_message_carries_an_action_id(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/chat.js')));
+
+        $this->assertStringContainsString('JSON.stringify({ body, action_id: newActionId() })', $code);
+    }
+
+    /**
+     * Presencia: Echo.join sobre el canal autorizado, una sola vez, y los
+     * nombres se pintan como texto.
+     */
+    public function test_the_presence_script_joins_the_presence_channel(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/presence.js')));
+
+        $this->assertSame(1, substr_count($code, "window.Echo.join('auction.presence')"));
+        $this->assertStringContainsString('.here(', $code);
+        $this->assertStringContainsString('.joining(', $code);
+        $this->assertStringContainsString('.leaving(', $code);
+        $this->assertStringNotContainsString('innerHTML', $code);
+        $this->assertStringContainsString("import './presence';", file_get_contents(resource_path('js/auction.js')));
     }
 }

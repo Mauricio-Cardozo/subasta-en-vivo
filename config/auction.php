@@ -91,9 +91,23 @@ return [
         'channel' => env('AUDIT_LOG_CHANNEL', 'audit'),
     ],
 
+    'log' => [
+        // Transiciones de la subasta (lot.opened, bid.accepted, lot.extended,
+        // lot.closed), escritas recién después del commit (7).
+        'channel' => env('AUCTION_LOG_CHANNEL', 'auction'),
+    ],
+
     'broadcast' => [
-        // Canal de log de los fallos de difusión: Reverb es best-effort y una
-        // caída no puede romper una acción ya confirmada (Tarea 1).
-        'log_channel' => env('BROADCAST_LOG_CHANNEL', 'auction'),
+        // Canal de log de cada evento entregado a Reverb (RF-16) y de cada
+        // fallo: Reverb es best-effort y una caída no puede romper una acción
+        // ya confirmada (Tarea 1).
+        'log_channel' => env('BROADCAST_LOG_CHANNEL', 'broadcast'),
+    ],
+
+    'sql' => [
+        // Consultas más lentas que este umbral van al canal `sql` (RF-17), sin
+        // los valores (bindings), que pueden traer datos de usuarios.
+        'slow_ms' => (float) env('SQL_SLOW_MS', 50),
+        'log_channel' => env('SQL_LOG_CHANNEL', 'sql'),
     ],
 ];

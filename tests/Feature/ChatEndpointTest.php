@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Events\ChatMessagePosted;
+use App\Models\AuctionAction;
 use App\Models\AuctionRoom;
 use App\Models\ChatMessage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -134,5 +135,45 @@ class ChatEndpointTest extends TestCase
         $this->postJson('/auction/chat', ['body' => 'Dos'])->assertStatus(429);
 
         $this->assertSame(1, ChatMessage::query()->count());
+    }
+
+    public function test_the_same_action_id_does_not_post_twice(): void
+    {
+        Event::fake([ChatMessagePosted::class]);
+        $this->join('Ana');
+
+        $first = $this->postJson('/auction/chat', ['body' => 'Hola', 'action_id' => 'm1'])->assertCreated();
+        // El límite de frecuencia no frena un reintento que no llega a publicar.
+        $this->travel(2)->seconds();
+        $second = $this->postJson('/auction/chat', ['body' => 'Hola', 'action_id' => 'm1'])->assertCreated();
+
+        // 6: un reintento de red repite la respuesta, no el mensaje.
+        $this->assertSame($first->json('id'), $second->json('id'));
+        $this->assertSame(1, ChatMessage::query()->count());
+        Event::assertDispatchedTimes(ChatMessagePosted::class, 1);
+    }
+
+    public function test_a_message_is_audited_without_its_text(): void
+    {
+        $this->join('Ana');
+
+        $this->postJson('/auction/chat', ['body' => 'Mi teléfono es 555-1234'])->assertCreated();
+
+        $action = AuctionAction::query()->where('type', 'chat')->sole();
+
+        $this->assertTrue($action->accepted);
+        $this->assertNotNull($action->participant_id);
+        $this->assertSame(['body_length' => 23], $action->payload);
+        $this->assertStringNotContainsString('555-1234', json_encode($action->payload, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_a_denied_message_is_audited(): void
+    {
+        $this->postJson('/auction/chat', ['body' => 'Hola'])->assertForbidden();
+
+        $action = AuctionAction::query()->where('type', 'chat')->sole();
+
+        $this->assertFalse($action->accepted);
+        $this->assertSame('unauthenticated', $action->reason);
     }
 }

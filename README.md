@@ -43,16 +43,20 @@ php artisan reverb:start # websocket en el puerto 8080
 npm run dev              # assets en desarrollo
 ```
 
+Opcional: `php artisan schedule:work` corre `auction:close-expired` cada minuto, una red de seguridad que liquida los lotes vencidos que nadie volvió a consultar. Sin él, el cierre sigue funcionando en cuanto alguien interactúa (ver **Cerrar el lote**).
+
 La configuración de Reverb (`REVERB_*` y `VITE_REVERB_*`) vive en `.env`; el repositorio solo incluye `.env.example` sin valores reales.
 
 ## Cómo probarlo
 
-1. Levantá los tres procesos y abrí la app en **dos navegadores o ventanas** distintas.
-2. En una, entrá a `/receptor` y elegí un nombre (pujador). En la otra, entrá a `/emisor` e iniciá sesión con el PIN (`AUCTION_HOST_PIN`).
-3. Como subastador, abrí un lote con una duración corta (por ejemplo 60 s).
-4. Como pujador, pujá: el precio y el temporizador cambian en las dos pantallas sin recargar.
-5. Esperá a que venza (o cerrá el lote a mano): el lote aparece en el **historial** con su resultado, y el ganador ve el saldo descontado.
-6. Probá el chat y su moderación, y el indicador de conexión (podés bajar Reverb y verlo pasar a `Sin conexión`).
+1. Levantá los tres procesos y abrí la app en **tres navegadores o ventanas privadas** (cada una es una sesión distinta).
+2. En una, entrá a `/emisor` e iniciá sesión con el PIN (`AUCTION_HOST_PIN`). En las otras dos, entrá a `/receptor` y elegí un nombre (pujadores).
+3. El panel **En la sala** de cada pantalla muestra a los tres conectados (canal de presencia). Cerrá una ventana y vas a ver cómo sale de la lista.
+4. Como subastador, abrí un lote con una duración corta (por ejemplo 60 s). Si abrís otro mientras hay uno abierto, queda en la **cola**.
+5. Como pujador, escribí tu oferta (el campo sugiere la puja mínima) y pujá: el precio y el temporizador cambian en todas las pantallas sin recargar. Probá una oferta por debajo del mínimo: el servidor la rechaza con el motivo.
+6. Esperá a que venza (o cerrá el lote a mano): el lote aparece en el **historial** con su resultado, y el ganador ve el saldo descontado.
+7. Probá el chat y su moderación, y el indicador de conexión (podés bajar Reverb y verlo pasar a `Sin conexión`).
+8. Como subastador, abrí **Panel** (`/admin`): pujas por minuto, últimas acciones auditadas y consultas lentas.
 
 Todo lo que se ve sale del servidor: si algo no llega por el canal, se recupera por HTTP al reconectar.
 
@@ -95,7 +99,7 @@ Sin `TRUSTED_PROXIES` la página carga los assets con `http://` dentro de `https
 php artisan test           # tests
 ```
 
-La CI de GitHub Actions corre ambos (más `npm run build`) en cada PR y bloquea el merge en `main` si fallan. Además levanta un PostgreSQL y corre ahí los tests de concurrencia (`--filter=ConcurrencyTest`), que en SQLite se saltan porque ese motor no bloquea filas.
+La CI de GitHub Actions corre ambos (más `npm run build`) en cada PR y bloquea el merge en `main` si fallan. Además levanta un PostgreSQL y corre ahí la suite completa, incluidos los tests de concurrencia, que en SQLite se saltan porque ese motor no bloquea filas.
 
 ```bash
 # Concurrencia real (opcional, en local):
@@ -115,6 +119,7 @@ navegador (/emisor, /receptor)              servidor                        clie
         │  GET /auction/state ─────────────────►│  AuctionSnapshot              │
         │◄────── estado inicial (no-store) ─────│                               │
         │  Echo: channel('auction')             │                               │
+        │  Echo: join('auction.presence') ─────►│  POST /broadcasting/auth      │
         │◄──────── WebSocket (Reverb :8080) ────│◄── AuctionStateUpdated ───────│
         │  dibuja snapshot (textContent)        │     (solo tras el commit)     │
         │  POST /join | /host/login             │                               │
@@ -122,11 +127,14 @@ navegador (/emisor, /receptor)              servidor                        clie
         │  POST /auction/lots/close (subastador)│  closeCurrentLot + lockForUpdate│
         │  POST /auction/bids (solo pujador) ──►│  placeBid + lockForUpdate     │
         │  POST /auction/chat (pujador o subastador)│  ChatService::post        │
-        │  GET /auction/chat (historial) ──────►│  ChatService::history         │
+        │  GET /auction/chat[?after_id=] ──────►│  ChatService::history         │
         │  DELETE /auction/chat/{id} (moderar) ►│  ChatService::delete          │
+        │  DELETE /auction/lots/{id} (cola) ───►│  dequeue + lockForUpdate      │
+        │  GET /admin (solo subastador) ───────►│  AdminDashboard (lectura)     │
 ```
 
 - `window.Echo.channel('auction').listen('.AuctionStateUpdated', …)` — un único listener por página (`resources/js/auction.js`).
+- `window.Echo.join('auction.presence')` — canal de presencia con la lista de conectados (`resources/js/presence.js`).
 - El chat usa el mismo canal desde `resources/js/chat.js`: `.ChatMessagePosted` y `.ChatMessageDeleted`, y pide `GET /auction/chat` al cargar y al reconectar.
 - El estado inicial se pide por **HTTP** (`GET /auction/state`); al reconectar también. Reverb no reemplaza al endpoint.
 - El cliente ignora eventos con `version` menor o igual a la mostrada.
@@ -135,21 +143,38 @@ navegador (/emisor, /receptor)              servidor                        clie
 
 ### Pujar
 
-- El pujador manda **solo un `action_id`** (`POST /auction/bids`); el monto efectivo lo calcula el servidor con el estado que tiene bajo bloqueo. El botón muestra la puja mínima que saldría del servidor, pero esa cuenta es solo informativa.
-- Reintentar con el mismo `action_id` devuelve la respuesta original (misma puja, mismo rechazo): la acción no se aplica dos veces.
+- El pujador **propone un monto** (RF-03): el campo acepta pesos con coma o punto, sugiere la puja mínima y el cliente lo convierte a centavos enteros (`amount_cents`) partiendo el texto, sin multiplicar decimales. El servidor decide si alcanza, bajo bloqueo; sin monto usa la puja mínima.
+- El servidor valida en el orden del plan (4.1): lote cerrado → `bid_too_low` → `already_leading` → `insufficient_balance`. El primer fallo es el motivo.
+- `action_id` es **opcional** (RNF-05). Con él, reintentar devuelve la respuesta original (misma puja, mismo rechazo) y la acción no se aplica dos veces; el mismo `action_id` con otro monto se rechaza con `action_id_reused`. Sin él, la puja se procesa y se audita, pero no es idempotente. El navegador manda uno por intento.
 - Un 422 del servidor se muestra **tal cual** en el formulario; nunca se pinta como éxito.
 
 ### Cerrar el lote
 
 - El subastador cierra a mano con `POST /auction/lots/close` (solo con lote abierto, idempotente por `action_id` igual que las pujas). Comparte el desenlace con el vencimiento: con pujas queda `sold` y se descuenta el saldo; sin pujas, `unsold`.
+- El plazo es `[started_at, ends_at)`: una puja que llega **exactamente** en `ends_at` ya es tarde (`Lot::hasExpired()`).
+- Cada cierre deja una fila `lot_closed` en `auction_actions` con la causa (`time` o `manual`), en la misma transacción que el cierre: una puja tardía se rechaza, pero el cierre que dispara queda confirmado, auditado y publicado.
+- Red de seguridad opcional: `php artisan auction:close-expired` (programado cada minuto) usa el mismo cierre bajo bloqueo, así que nunca cierra dos veces.
 - El **temporizador** del panel se calcula con el `remaining_ms` del servidor (no con el reloj del navegador) y se reancla con cada estado; al llegar a cero pide el estado para que el servidor liquide el lote. El navegador nunca simula el cierre.
 - Una puja dentro de la **ventana final** corre el cierre (anti-sniping, con tope de extensiones); el panel lo refleja en el resumen del evento y en el contador reajustado.
 
 ### Chat
 
 - Publican el **pujador** y el **subastador** (`POST /auction/chat`). El servidor decide autor y firma: el subastador se firma con `chat.host_name` porque no tiene fila de participante. El texto se recorta y se corta en `chat.max_length`.
-- En vivo por el mismo canal `auction`: `ChatMessagePosted` para lo nuevo y `ChatMessageDeleted` para lo borrado. El cliente pide `GET /auction/chat` al cargar y **al reconectar** (Reverb no repite lo que pasó sin conexión) y ordena por `id`.
-- **Moderar:** el subastador borra cualquier mensaje; el pujador, solo los suyos. El servidor lo vuelve a comprobar (el botón del cliente es solo cosmético) y el borrado es físico, así que no reaparece al recargar.
+- En vivo por el mismo canal `auction`: `ChatMessagePosted` para lo nuevo y `ChatMessageDeleted` para lo borrado. El cliente pide `GET /auction/chat` al cargar y **al reconectar** (Reverb no repite lo que pasó sin conexión) y ordena por `id`. Al reconectar recarga la ventana entera (no solo `after_id`) para enterarse también de los mensajes moderados mientras no había conexión.
+- `GET /auction/chat?after_id={id}` devuelve solo los mensajes posteriores a ese id (6).
+- Cada envío lleva un `action_id`: si la red reintenta, el servidor repite la respuesta en vez de duplicar el mensaje.
+- **Moderar:** el subastador borra cualquier mensaje; el pujador, solo los suyos (una extensión respecto del plan). El servidor lo vuelve a comprobar (el botón del cliente es solo cosmético). El borrado es **lógico** (`deleted_at`): el mensaje sale del historial pero la fila queda para la auditoría.
+
+### Cola de lotes
+
+- Si el subastador abre un lote mientras hay otro abierto, el nuevo queda **en cola** (FIFO, hasta `auction.queue.max`). Al cerrarse el lote, tras una pausa de `auction.queue.gap_seconds` se abre solo el siguiente, sin cron: lo dispara la próxima lectura del estado (o `auction:close-expired`).
+- El subastador puede quitar un lote de la cola (`DELETE /auction/lots/{id}`): queda `cancelled`, no se borra.
+
+### En la sala (canal de presencia)
+
+- Es el tercer tipo de canal (público, privado y **presencia**). `auction.presence` muestra en las dos pantallas quién está conectado y lo actualiza al entrar y salir (`here`, `joining`, `leaving`).
+- No hay cuentas: antes de suscribirse, Echo pide permiso a `/broadcasting/auth` y el middleware `ResolveBroadcastIdentity` presenta la identidad de la **sesión** como usuario. Sin nombre ni rol de subastador la suscripción se rechaza (403); la subasta sigue en vivo por el canal público.
+- Cada miembro expone un **seudónimo**, el nombre y el rol; nunca ids internos, saldos ni la IP. Varias pestañas de la misma sesión cuentan como un solo miembro.
 
 ### Historial de lotes
 
@@ -178,29 +203,62 @@ No hay cuentas ni contraseñas: la identidad vive en la **sesión del servidor**
 - `version` es la versión del estado persistido de la sala: sube una vez por transición confirmada y permite ignorar eventos desordenados. El chat no la usa: se ordena por `id`.
 - Balance y reglas en `config/auction.php` (incluidos los límites de peticiones); la lógica de subasta vive en `app/Services/AuctionService.php`; los controladores son delgados.
 - Concurrencia real probada contra PostgreSQL en la CI (`tests/Feature/ConcurrencyTest.php`): sin `lockForUpdate` dos pujas simultáneas perderían una actualización, dos cierres adjudicarían dos veces o una puja y un cierre dejarían el lote incoherente.
-- Idempotencia por `action_id` con restricción única `(actor_key, action_id)`; reintentar repite la respuesta original. El guard vive en `App\Services\ActionIdempotency` y lo comparten las pujas y el cierre; la `actor_key` del subastador es un token durable de la sesión, no el id de sesión (que se regenera).
+- Idempotencia por `action_id` (opcional) con restricción única `(actor_key, action_id)`; reintentar repite la respuesta original y reusar el id con otro contenido se rechaza (`action_id_reused`). El registro vive en `App\Services\ActionIdempotency` y lo comparten las pujas, la apertura, el cierre y el chat; la `actor_key` del subastador es un token durable de la sesión, no el id de sesión (que se regenera).
 
 ## Observabilidad
 
-- **Logs en JSON:** los canales `auction` (aplicación) y `audit` (auditoría) escriben una línea JSON por registro en `storage/logs/` y rotan a diario, conservando `LOG_DAILY_DAYS` archivos. En `.env.example`, `LOG_CHANNEL=auction`.
-- **`correlation_id` de punta a punta:** el middleware `AssignCorrelationId` toma `X-Correlation-ID` si trae un valor seguro (o genera un UUID), lo comparte con **todos** los registros (`Log::shareContext`) y lo devuelve en la cabecera de la respuesta. Un problema reportado con esa cabecera se encuentra en los logs sin adivinar.
-- **Auditoría:** cada acción que cambia estado —o que se intenta— deja un registro en el canal `audit` con el actor (`actor_key`), la IP, el `action_id`, el resultado (`accepted`/`rejected`/`replayed`/`in_progress`) y el `correlation_id`. Incluye el login del subastador (el **PIN nunca se registra**) y las denegaciones del chat. El guard de idempotencia audita una sola vez por camino, así un reintento no se cuenta como una acción nueva.
-- El valor entrante de `X-Correlation-ID` se valida (`[A-Za-z0-9._-]`, ≤64) para no inyectar en los registros.
+- **Auditoría persistente (`auction_actions`, RF-15):** cada acción (puja, apertura, cierre, baja de la cola, mensaje, borrado), aceptada o rechazada, deja una fila con `type`, `participant_id`, `actor_key`, `ip`, `payload` (sin secretos: del chat se guarda el largo, no el texto), `accepted`, `reason`, la respuesta (`result`) y el `correlation_id`. Los cierres quedan como `lot_closed` con su causa. La misma fila sirve para la idempotencia.
+- **Logs en JSON:** una línea por registro, rotación diaria y `LOG_DAILY_DAYS` archivos, en cuatro canales:
+
+  | Canal | Qué guarda |
+  |---|---|
+  | `auction` | La aplicación y las transiciones: `lot.opened`, `bid.accepted`, `lot.extended`, `lot.closed` (escritas recién tras el commit). |
+  | `audit` | Cada acción con su resultado (`accepted`/`rejected`/`replayed`/`in_progress`), incluido el login del subastador (el **PIN nunca se registra**). |
+  | `broadcast` | `broadcast.sent` por cada evento que Reverb aceptó (evento, canales, payload, origen) y `broadcast.failed` por cada fallo. "Aceptado por Reverb" no es "recibido por los navegadores". |
+  | `sql` | `sql.slow`: consultas de más de `SQL_SLOW_MS` (50 ms), con sus `?` y **sin los valores**. |
+
+- **`correlation_id` de punta a punta:** el middleware `AssignCorrelationId` toma `X-Correlation-ID` si trae un valor seguro (o genera un UUID), lo comparte con **todos** los registros (`Log::shareContext`) y lo devuelve en la cabecera de la respuesta. La misma petición se sigue en `audit`, `auction`, `broadcast`, `sql` y en `auction_actions`. El valor entrante se valida (`[A-Za-z0-9._-]`, ≤64) para no inyectar en los registros.
+- Los tests escriben sus logs aparte (`LOG_DIR=storage/logs/testing` en `phpunit.xml`).
+- **Panel `/admin`** (solo subastador): pujas por minuto, últimas acciones de `auction_actions` y consultas lentas del día.
+
+### Leer los logs con `jq`
+
+```bash
+# Seguir una petición por todos los canales (el id sale de la cabecera X-Correlation-ID)
+jq -c --arg id "<correlation_id>" 'select(.context.correlation_id == $id) | {message, context}' storage/logs/*.log
+
+# Acciones rechazadas y su motivo
+jq -c 'select(.context.outcome == "rejected") | {message, reason: .context.reason, at: .datetime}' storage/logs/audit-*.log
+
+# Eventos entregados a Reverb: hora, evento y qué petición los originó
+jq -r 'select(.message == "broadcast.sent") | "\(.datetime[11:19]) \(.context.event) \(.context.origin)"' storage/logs/broadcast-*.log
+
+# Fallos de difusión (Reverb caído)
+jq -c 'select(.message == "broadcast.failed") | {event: .context.event, error: .context.exception}' storage/logs/broadcast-*.log
+
+# Transiciones de la subasta
+jq -c 'select(.message | test("^(lot|bid)\\.")) | {message, context}' storage/logs/auction-*.log
+
+# Las 10 consultas más lentas
+jq -s 'map(select(.message == "sql.slow")) | sort_by(-.context.ms) | .[:10] | map({ms: .context.ms, sql: .context.sql})' storage/logs/sql-*.log
+```
 
 ## Estructura
 
 ```
 app/
   Events/            # AuctionStateUpdated, ChatMessagePosted, ChatMessageDeleted
-  Http/Controllers/  # AuctionController, ParticipantController, HostAuthController, BidController, ChatController (delgados)
-  Http/Middleware/   # EnsureHost, EnsureParticipant, AssignCorrelationId
+  Console/Commands/  # CloseExpiredLots (auction:close-expired)
+  Http/Controllers/  # AuctionController, ParticipantController, HostAuthController, BidController, ChatController, AdminController (delgados)
+  Http/Middleware/   # EnsureHost, EnsureParticipant, AssignCorrelationId, ResolveBroadcastIdentity
   Http/Requests/     # JoinRequest, HostLoginRequest, OpenLotRequest, CloseLotRequest, PlaceBidRequest, ChatMessageRequest
   Models/            # AuctionRoom, Lot, Participant, Bid, AuctionAction, ChatMessage
-  Services/          # AuctionService, AuctionSnapshot, ChatService, SessionIdentity, ActionIdempotency, AuditLogger
-  Support/           # ActionResult, Money, CorrelationId, RequestContext
-config/auction.php
-resources/views/auction/   # layout, emisor, receptor, partials/lot, partials/history, partials/chat
-resources/js/              # auction.js, chat.js
+  Services/          # AuctionService, AuctionSnapshot, ChatService, SessionIdentity, ActionIdempotency, AuditLogger, AdminDashboard
+  Support/           # ActionResult, Money, CorrelationId, RequestContext, Broadcasting/ResilientBroadcaster
+config/auction.php, config/trustedproxy.php
+routes/channels.php        # autorización del canal de presencia
+resources/views/auction/   # layout, emisor, receptor, admin, partials/{lot,history,chat,presence}
+resources/js/              # auction.js, chat.js, presence.js, action-id.js
 tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 ```
 
@@ -214,6 +272,17 @@ tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 - [x] **Hito 5 — Chat:** esquema de mensajes; `POST /auction/chat` para pujador y subastador con `ChatMessagePosted` tras el commit; historial por `GET /auction/chat` y moderación por `DELETE` con `ChatMessageDeleted`; panel compartido en vivo (historial por HTTP al cargar y al reconectar) y tests de concurrencia del chat contra PostgreSQL.
 - [x] **Hito 6 — Logging y trazabilidad:** canales `auction`/`audit` en JSON con rotación diaria, `correlation_id` de punta a punta (`X-Correlation-ID` en la respuesta) y auditoría de acciones con el `action_id` y el resultado.
 - [x] **Hito 7 — Pulido y entrega:** historial de lotes cerrados en el snapshot público, estados de conexión con color y región viva, README de entrega y release `v1.0.0`.
+
+**Después de `v1.0.0`** (para cerrar el plan completo y la consigna de canales):
+
+- [x] Cola de lotes con auto-avance (opcional del Hito 7).
+- [x] Túnel para probar desde otros dispositivos y borde exacto de `ends_at`.
+- [x] Monto propuesto por el pujador (RF-03) y orden de validación de 4.1.
+- [x] `action_id` opcional y `action_id_reused` (RNF-05, 4.7).
+- [x] Auditoría persistente en `auction_actions` (RF-15), canales `broadcast` y `sql` (RF-16, RF-17) y comandos `jq`.
+- [x] Chat con borrado lógico, `after_id` e idempotencia (6).
+- [x] `auction:close-expired` (4.4) y panel `/admin` (RF-18).
+- [x] Canal de presencia: quién está en la sala.
 
 Cada hito es un milestone en GitHub; cada tarea, un issue; cada issue, una rama y un PR.
 

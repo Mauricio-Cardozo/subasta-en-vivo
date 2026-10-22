@@ -15,16 +15,24 @@ use Tests\TestCase;
  */
 class JsonLogChannelTest extends TestCase
 {
-    public function test_the_auction_and_audit_channels_are_json_and_rotate(): void
+    public function test_the_project_channels_are_json_and_rotate(): void
     {
-        foreach (['auction', 'audit'] as $channel) {
+        foreach (['auction', 'audit', 'broadcast', 'sql'] as $channel) {
             $this->assertSame(JsonFormatter::class, config("logging.channels.{$channel}.formatter"));
             $this->assertSame(RotatingFileHandler::class, config("logging.channels.{$channel}.handler"));
             $this->assertSame(14, config("logging.channels.{$channel}.handler_with.maxFiles"));
+            $this->assertStringEndsWith(
+                "/{$channel}.log",
+                config("logging.channels.{$channel}.handler_with.filename"),
+            );
         }
+    }
 
-        $this->assertStringEndsWith(
-            'logs/audit.log',
+    public function test_the_tests_write_their_logs_apart(): void
+    {
+        // 7: los registros de los tests no se mezclan con los de la app.
+        $this->assertSame(
+            base_path('storage/logs/testing/audit.log'),
             config('logging.channels.audit.handler_with.filename'),
         );
     }

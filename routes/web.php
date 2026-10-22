@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminController;
 use App\Http\Controllers\AuctionController;
 use App\Http\Controllers\BidController;
 use App\Http\Controllers\ChatController;
@@ -61,6 +62,11 @@ Route::post('/auction/chat', [ChatController::class, 'store'])
 // Moderación del chat: borra el autor o el subastador (RF-11).
 Route::delete('/auction/chat/{message}', [ChatController::class, 'destroy'])
     ->name('auction.chat.destroy');
+
+// Panel del subastador (RF-18): solo lectura.
+Route::get('/admin', AdminController::class)
+    ->middleware('host')
+    ->name('admin');
 
 // Emisor de eventos de prueba: solo se registra en local, así que en
 // producción la ruta no existe.

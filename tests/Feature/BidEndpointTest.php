@@ -131,13 +131,36 @@ class BidEndpointTest extends TestCase
         $this->assertSame(1, Bid::query()->count());
     }
 
-    public function test_the_action_id_is_required(): void
+    public function test_the_action_id_is_optional(): void
     {
         $this->join('Ana');
 
+        // RNF-05: sin `action_id` la puja se procesa y se audita igual.
         $this->postJson('/auction/bids', ['amount_cents' => 5_000])
+            ->assertCreated()
+            ->assertJson(['amount_cents' => 5_000]);
+
+        $this->assertSame(1, Bid::query()->count());
+        $this->assertNull(AuctionAction::query()->sole()->action_id);
+    }
+
+    public function test_the_same_action_id_with_another_amount_is_rejected(): void
+    {
+        $this->join('Ana');
+
+        $this->postJson('/auction/bids', $this->payload(['amount_cents' => 5_000]))->assertCreated();
+
+        // 4.7: el mismo `action_id` con otro contenido no es un reintento.
+        $this->postJson('/auction/bids', $this->payload(['amount_cents' => 9_000]))
             ->assertStatus(422)
-            ->assertJsonValidationErrors('action_id');
+            ->assertJson(['reason' => 'action_id_reused']);
+
+        $this->assertSame(1, Bid::query()->count());
+        $this->assertSame(5_000, Lot::query()->sole()->current_price_cents);
+        $this->assertSame(
+            ['accepted' => false, 'reason' => 'action_id_reused'],
+            AuctionAction::query()->latest('id')->first()->only(['accepted', 'reason']),
+        );
     }
 
     public function test_bids_are_throttled_per_second(): void

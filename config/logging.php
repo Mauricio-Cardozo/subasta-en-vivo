@@ -7,6 +7,23 @@ use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogUdpHandler;
 use Monolog\Processor\PsrLogMessageProcessor;
 
+// Carpeta de los canales JSON del proyecto. Los tests usan otra (`LOG_DIR` en
+// phpunit.xml) para no mezclar sus registros con los de la app (7).
+$logDir = env('LOG_DIR') ? base_path(env('LOG_DIR')) : storage_path('logs');
+
+// Un canal JSON por archivo, una línea por registro, rotado a diario.
+$jsonChannel = fn (string $name): array => [
+    'driver' => 'monolog',
+    'level' => env('LOG_LEVEL', 'debug'),
+    'handler' => RotatingFileHandler::class,
+    'handler_with' => [
+        'filename' => $logDir.'/'.$name.'.log',
+        'maxFiles' => (int) env('LOG_DAILY_DAYS', 14),
+    ],
+    'formatter' => JsonFormatter::class,
+    'processors' => [PsrLogMessageProcessor::class],
+];
+
 return [
 
     /*
@@ -76,38 +93,24 @@ return [
         ],
 
         /*
-         * Canales en JSON del proyecto.
+         * Canales en JSON del proyecto (7).
          *
          * Cada registro es una línea JSON: se leen y filtran con herramientas
          * (jq, colectores) sin parsear texto libre. Rotan a diario y conservan
-         * `LOG_DAILY_DAYS` archivos.
+         * `LOG_DAILY_DAYS` archivos. Todos llevan el `correlation_id`.
          *
-         * `auction` es el canal de la aplicación; `audit` guarda las acciones
-         * (quién hizo qué, con el `correlation_id` de la petición).
+         * - `auction`: la aplicación y las transiciones de la subasta.
+         * - `audit`: las acciones (quién hizo qué y con qué resultado).
+         * - `broadcast`: cada evento entregado a Reverb y cada fallo.
+         * - `sql`: las consultas más lentas que `auction.sql.slow_ms`.
          */
-        'auction' => [
-            'driver' => 'monolog',
-            'level' => env('LOG_LEVEL', 'debug'),
-            'handler' => RotatingFileHandler::class,
-            'handler_with' => [
-                'filename' => storage_path('logs/auction.log'),
-                'maxFiles' => (int) env('LOG_DAILY_DAYS', 14),
-            ],
-            'formatter' => JsonFormatter::class,
-            'processors' => [PsrLogMessageProcessor::class],
-        ],
+        'auction' => $jsonChannel('auction'),
 
-        'audit' => [
-            'driver' => 'monolog',
-            'level' => env('LOG_LEVEL', 'debug'),
-            'handler' => RotatingFileHandler::class,
-            'handler_with' => [
-                'filename' => storage_path('logs/audit.log'),
-                'maxFiles' => (int) env('LOG_DAILY_DAYS', 14),
-            ],
-            'formatter' => JsonFormatter::class,
-            'processors' => [PsrLogMessageProcessor::class],
-        ],
+        'audit' => $jsonChannel('audit'),
+
+        'broadcast' => $jsonChannel('broadcast'),
+
+        'sql' => $jsonChannel('sql'),
 
         'slack' => [
             'driver' => 'slack',

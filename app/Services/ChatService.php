@@ -44,13 +44,16 @@ class ChatService
     }
 
     /**
-     * Historial de la sala: los últimos `chat.history` mensajes, en orden de
-     * llegada (`id` ascendente). Se pide por HTTP al cargar y al reconectar
-     * (RF-12), porque Reverb no garantiza lo que pasó mientras no había conexión.
+     * Historial de la sala, en orden de llegada (`id` ascendente).
+     *
+     * Sin `$afterId` son los últimos `chat.history` mensajes: el primer llenado
+     * y la recarga al reconectar (RF-12), porque Reverb no garantiza lo que
+     * pasó sin conexión. Con `$afterId` son los posteriores a ese id (hasta el
+     * mismo tope), para pedir solo lo que falta. Los moderados no aparecen.
      *
      * @return list<array{id: int, author_name: string, body: string, posted_at: string}>
      */
-    public function history(): array
+    public function history(?int $afterId = null): array
     {
         $room = $this->auction->room();
 
@@ -58,19 +61,22 @@ class ChatService
             return [];
         }
 
-        return ChatMessage::query()
-            ->where('room_id', $room->id)
-            ->orderByDesc('id')
-            ->limit((int) config('auction.chat.history'))
-            ->get()
-            ->reverse()
+        $limit = (int) config('auction.chat.history');
+        $query = ChatMessage::query()->where('room_id', $room->id);
+
+        $messages = $afterId === null
+            ? $query->orderByDesc('id')->limit($limit)->get()->reverse()
+            : $query->where('id', '>', $afterId)->orderBy('id')->limit($limit)->get();
+
+        return $messages
             ->map(fn (ChatMessage $message): array => $this->payload($message))
             ->values()
             ->all();
     }
 
     /**
-     * Borra un mensaje (autor o subastador). Físico: al recargar no vuelve.
+     * Modera un mensaje (autor o subastador). Borrado lógico (6): la fila
+     * queda con `deleted_at` para la auditoría y ya no vuelve al recargar.
      */
     public function delete(ChatMessage $message): void
     {

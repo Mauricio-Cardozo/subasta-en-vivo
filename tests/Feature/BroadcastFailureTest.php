@@ -17,7 +17,7 @@ use Tests\TestCase;
  * El broadcaster real (Reverb/Pusher) apunta a un puerto muerto, así que cada
  * evento lanza `BroadcastException` al salir a la red. La acción tiene que
  * responder normal, la base quedar confirmada, el `action_id` completado y el
- * fallo registrado en el canal `auction` con el `correlation_id`.
+ * fallo registrado en el canal `broadcast` con el `correlation_id`.
  */
 class BroadcastFailureTest extends TestCase
 {
@@ -47,7 +47,7 @@ class BroadcastFailureTest extends TestCase
 
         $this->logDir = sys_get_temp_dir().'/auction-broadcast-'.uniqid();
         mkdir($this->logDir);
-        config()->set('logging.channels.auction.handler_with.filename', $this->logDir.'/auction.log');
+        config()->set('logging.channels.broadcast.handler_with.filename', $this->logDir.'/broadcast.log');
     }
 
     protected function tearDown(): void
@@ -74,7 +74,7 @@ class BroadcastFailureTest extends TestCase
     }
 
     /**
-     * Registros `broadcast.failed` del canal `auction` (archivo rotado a diario).
+     * Registros `broadcast.failed` del canal `broadcast` (archivo rotado a diario).
      *
      * @return list<array<string, mixed>>
      */
@@ -82,7 +82,7 @@ class BroadcastFailureTest extends TestCase
     {
         $records = [];
 
-        foreach (glob($this->logDir.'/auction-*.log') ?: [] as $file) {
+        foreach (glob($this->logDir.'/broadcast-*.log') ?: [] as $file) {
             foreach (explode("\n", trim((string) file_get_contents($file))) as $line) {
                 if ($line === '') {
                     continue;

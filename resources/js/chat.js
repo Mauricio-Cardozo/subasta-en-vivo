@@ -1,4 +1,5 @@
 import './echo';
+import { newActionId } from './action-id';
 
 /**
  * Chat de la sala (RF-11, RF-12).
@@ -270,7 +271,8 @@ function wireForm() {
             const message = await request(endpoints.chat, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ body }),
+                // Un id por envío: si la red reintenta, no se duplica (6).
+                body: JSON.stringify({ body, action_id: newActionId() }),
             });
 
             field.value = '';

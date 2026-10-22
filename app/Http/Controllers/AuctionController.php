@@ -97,17 +97,27 @@ class AuctionController extends Controller
      */
     public function openLot(OpenLotRequest $request): JsonResponse
     {
+        $lot = [
+            'title' => $request->string('title')->toString(),
+            'description' => $request->string('description')->toString() ?: null,
+            'start_price_cents' => (int) $request->validated('start_price_cents'),
+            'min_increment_cents' => $request->minIncrementCents(),
+            'duration_seconds' => $request->durationSeconds(),
+        ];
+
         return $this->idempotency->run(
             $this->identity->actorKey($request),
-            $request->string('action_id')->toString(),
+            $request->validated('action_id'),
             fn (): ActionResult => $this->auction->openLot(
-                title: $request->string('title')->toString(),
-                description: $request->string('description')->toString() ?: null,
-                startPriceCents: (int) $request->validated('start_price_cents'),
-                minIncrementCents: $request->minIncrementCents(),
-                durationSeconds: $request->durationSeconds(),
+                title: $lot['title'],
+                description: $lot['description'],
+                startPriceCents: $lot['start_price_cents'],
+                minIncrementCents: $lot['min_increment_cents'],
+                durationSeconds: $lot['duration_seconds'],
             ),
             event: 'auction.lot_open',
+            type: 'open_lot',
+            payload: $lot,
         );
     }
 
@@ -121,9 +131,10 @@ class AuctionController extends Controller
     {
         return $this->idempotency->run(
             $this->identity->actorKey($request),
-            $request->string('action_id')->toString(),
+            $request->validated('action_id'),
             fn (): ActionResult => $this->auction->closeCurrentLot(),
             event: 'auction.lot_close',
+            type: 'close_lot',
         );
     }
 
@@ -142,6 +153,15 @@ class AuctionController extends Controller
         $wasQueued = $lot->status->isQueued();
 
         $result = $this->auction->dequeue($lot);
+
+        $this->idempotency->record(
+            type: 'dequeue_lot',
+            actorKey: $this->identity->actorKey($request),
+            accepted: $result->ok,
+            reason: $result->reason,
+            payload: ['lot_id' => $lot->id],
+            result: $result->context,
+        );
 
         $this->audit->record('auction.lot_dequeued', [
             'actor_key' => $this->identity->actorKey($request),

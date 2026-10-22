@@ -171,7 +171,9 @@ class AuctionScreensTest extends TestCase
             ->assertOk()
             ->assertSee('data-bid-section', escape: false)
             ->assertSee('data-bid class', escape: false)
-            ->assertSee('data-bid-minimum', escape: false);
+            ->assertSee('data-bid-minimum', escape: false)
+            // El pujador propone su monto (RF-03).
+            ->assertSee('data-bid-amount', escape: false);
     }
 
     public function test_the_bidder_screen_lists_recent_bids(): void
@@ -272,5 +274,19 @@ class AuctionScreensTest extends TestCase
             ->assertSee('data-chat-messages', escape: false)
             ->assertDontSee('data-chat-form', escape: false)
             ->assertDontSee('data-chat-field', escape: false);
+    }
+
+    public function test_both_screens_show_who_is_in_the_room(): void
+    {
+        // Sin identidad se ve el panel, pero no se une a la presencia.
+        $this->get('/receptor')
+            ->assertOk()
+            ->assertSee('data-presence', escape: false)
+            ->assertDontSee('data-presence-join', escape: false);
+
+        $this->asParticipant();
+
+        $this->get('/receptor')->assertOk()->assertSee('data-presence-join="1"', escape: false);
+        $this->get('/emisor')->assertOk()->assertSee('data-presence', escape: false);
     }
 }

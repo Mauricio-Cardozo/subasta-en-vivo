@@ -215,18 +215,18 @@ class OpenLotTest extends TestCase
         $this->assertSame(2, AuctionRoom::query()->sole()->version);
     }
 
-    public function test_the_action_id_is_required_to_open(): void
+    public function test_the_action_id_is_optional_to_open(): void
     {
         $this->asHost();
 
-        $this->postJson('/auction/lots', [
-            'title' => 'Reloj antiguo',
-            'start_price_cents' => 5_000,
-        ])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('action_id');
+        // RNF-05: sin `action_id` la acción corre y se audita, pero no es
+        // idempotente (dos envíos encolan dos lotes).
+        $payload = ['title' => 'Reloj antiguo', 'start_price_cents' => 5_000];
 
-        $this->assertSame(0, Lot::query()->count());
+        $this->postJson('/auction/lots', $payload)->assertCreated();
+        $this->postJson('/auction/lots', $payload)->assertCreated();
+
+        $this->assertSame(2, Lot::query()->count());
     }
 
     public function test_the_same_action_id_does_not_enqueue_twice(): void

@@ -8,8 +8,11 @@ use App\Support\CorrelationId;
 use App\Support\RequestContext;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -42,6 +45,29 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureRateLimiting();
+        $this->logSlowQueries();
+    }
+
+    /**
+     * Consultas lentas al canal `sql` (RF-17).
+     *
+     * Se registra el SQL con sus `?`, nunca los valores: pueden traer datos de
+     * los usuarios. El `correlation_id` llega por el contexto compartido, así
+     * que una consulta lenta se ubica en la petición que la hizo.
+     */
+    private function logSlowQueries(): void
+    {
+        DB::listen(function (QueryExecuted $query): void {
+            if ($query->time < (float) config('auction.sql.slow_ms')) {
+                return;
+            }
+
+            Log::channel(config('auction.sql.log_channel'))->warning('sql.slow', [
+                'sql' => $query->sql,
+                'ms' => $query->time,
+                'connection' => $query->connectionName,
+            ]);
+        });
     }
 
     /**
