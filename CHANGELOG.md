@@ -9,6 +9,10 @@ Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](h
 - `scripts/demo.ps1 tunnel` / `local`: abre dos túneles rápidos de Cloudflare (app y Reverb), apunta las cinco claves del `.env` a sus direcciones, recompila y levanta la demo para entrar desde celulares; `local` vuelve el `.env` a la demo sin túnel. `stop` también corta los túneles.
 - `scripts/demo.ps1`: demo portable en Windows sin instalar nada en el sistema (`setup`, `start`, `stop`, `clean`). Baja PHP 8.4, Node.js 22 y Composer a `demo-tools` con verificación SHA-256, prepara la app, abre tres navegadores con sesiones distintas y, al final, borra el proyecto y las herramientas.
 
+### Corregido
+
+- `demo.ps1 tunnel` cortaba con "no pudo abrir el túnel" aunque el túnel se creaba: la primera vez, Windows revisa el `cloudflared.exe` recién bajado y tarda varios segundos en arrancarlo, y el script lo daba por caído a los 5 s. Ahora espera a verlo correr y solo corta si arrancó y se cerró.
+
 ## [1.1.0] - 2026-10-22
 
 El plan completo: lo que faltaba de los requisitos, el canal de presencia de la consigna y la puesta a punto para presentar.
