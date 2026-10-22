@@ -298,4 +298,20 @@ class AuctionScriptGuardTest extends TestCase
 
         $this->assertStringContainsString('JSON.stringify({ body, action_id: newActionId() })', $code);
     }
+
+    /**
+     * Presencia: Echo.join sobre el canal autorizado, una sola vez, y los
+     * nombres se pintan como texto.
+     */
+    public function test_the_presence_script_joins_the_presence_channel(): void
+    {
+        $code = $this->code(file_get_contents(resource_path('js/presence.js')));
+
+        $this->assertSame(1, substr_count($code, "window.Echo.join('auction.presence')"));
+        $this->assertStringContainsString('.here(', $code);
+        $this->assertStringContainsString('.joining(', $code);
+        $this->assertStringContainsString('.leaving(', $code);
+        $this->assertStringNotContainsString('innerHTML', $code);
+        $this->assertStringContainsString("import './presence';", file_get_contents(resource_path('js/auction.js')));
+    }
 }

@@ -82,6 +82,8 @@
                 </ul>
             </section>
 
+            @include('auction.partials.presence')
+
             @include('auction.partials.history')
         </div>
 

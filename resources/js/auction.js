@@ -1,5 +1,6 @@
 import './echo';
 import './chat';
+import './presence';
 import { newActionId } from './action-id';
 
 /**
