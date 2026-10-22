@@ -6,10 +6,30 @@ Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](h
 
 ### Agregado
 
+- Cola de lotes con auto-avance: abrir un lote con otro abierto lo encola (FIFO, tope `auction.queue.max`) y, tras la pausa `auction.queue.gap_seconds`, el siguiente se abre solo; `DELETE /auction/lots/{id}` lo quita de la cola.
+- El pujador propone su monto (RF-03): campo en pesos (coma o punto) que sugiere la puja mínima y manda `amount_cents` en centavos enteros.
+- Auditoría persistente (RF-15): `auction_actions` registra cada acción, aceptada o rechazada, con `type`, `participant_id`, `ip`, `payload`, `accepted`, `reason`, `result` y `correlation_id`; cada cierre suma una fila `lot_closed` con su causa (`time`/`manual`).
+- `action_id_reused`: el mismo `action_id` con otro contenido se rechaza sin tocar la acción original (4.7).
+- Canales de log `broadcast` (`broadcast.sent` por cada evento aceptado por Reverb, RF-16) y `sql` (`sql.slow` por encima de `SQL_SLOW_MS`, sin valores, RF-17); transiciones `lot.opened`, `bid.accepted`, `lot.extended` y `lot.closed` en el canal `auction`, tras el commit.
+- Chat: `GET /auction/chat?after_id=` y `action_id` en `POST /auction/chat` para no duplicar mensajes por reintentos (6).
+- Comando `auction:close-expired`, programado cada minuto, como red de seguridad del cierre perezoso (4.4).
+- Panel `/admin` (RF-18, solo subastador): pujas por minuto, últimas acciones auditadas y consultas lentas.
+- Canal de presencia `auction.presence`: las dos pantallas muestran quién está en la sala. `/broadcasting/auth` lo autoriza con la identidad de la sesión (`ResolveBroadcastIdentity`), sin cuentas de usuario.
+- README: comandos `jq` para leer los logs y secciones de cola, presencia y panel.
 - Soporte para probar con un túnel (cloudflared, ngrok): `config/trustedproxy.php` lee `TRUSTED_PROXIES` para confiar en las cabeceras `X-Forwarded-*` del agente local. Sin eso, detrás de un túnel HTTPS los assets salían con `http://` (bloqueados por contenido mixto) y todos los visitantes compartían la IP `127.0.0.1` en los límites por IP. README: sección **Probar con un túnel**.
+
+### Cambiado
+
+- `action_id` es opcional en pujas, apertura y cierre (RNF-05): sin él la acción se procesa y se audita, pero no es idempotente.
+- La validación de la puja sigue el orden del plan (4.1): monto bajo antes que "ya es líder".
+- La moderación del chat es un borrado lógico (`deleted_at`): el mensaje sale del historial pero la fila queda para la auditoría.
+- Los fallos de difusión (`broadcast.failed`) pasan del canal `auction` al canal `broadcast`.
+- Los tests escriben sus logs en `storage/logs/testing` (`LOG_DIR` en `phpunit.xml`).
 
 ### Corregido
 
+- `auction_actions.actor_key` admite 100 caracteres: la de un visitante sin identidad mide 72 y PostgreSQL rechazaba la fila de su denegación (500).
+- La pausa de la cola abre el siguiente lote justo en `queue_opens_at`, con el mismo borde que el vencimiento.
 - Una puja que llegaba **exactamente** en `ends_at` se aceptaba (y extendía el cierre por anti-sniping), y `GET /auction/state` no cerraba el lote en ese instante. El plazo se comparaba con `isPast()`, que es falso justo en `ends_at`; ahora `Lot::hasExpired()` respeta el intervalo `[started_at, ends_at)` de la sección 4.2 del plan.
 
 ## [1.0.0] - 2026-10-17
