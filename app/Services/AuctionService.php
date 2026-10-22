@@ -186,10 +186,8 @@ class AuctionService
                     : ActionResult::rejected('lot_closed', 'El lote ya está cerrado.');
             }
 
-            if ($lot->leader_participant_id === $participant->id) {
-                return ActionResult::rejected('already_leading', 'Ya vas ganando este lote.');
-            }
-
+            // Orden de validación del plan (4.1): el primer fallo define el
+            // motivo. Cerrado → monto bajo → ya es líder → saldo.
             $minimum = $this->minimumBidCents($lot);
             $amount = $amountCents ?? $minimum;
 
@@ -199,6 +197,10 @@ class AuctionService
                     'La puja mínima es '.Money::format($minimum).'.',
                     ['minimum_cents' => $minimum],
                 );
+            }
+
+            if ($lot->leader_participant_id === $participant->id) {
+                return ActionResult::rejected('already_leading', 'Ya vas ganando este lote.');
             }
 
             if (! $participant->canAfford($amount)) {

@@ -135,6 +135,27 @@ class PlaceBidTest extends TestCase
         $this->assertSame(1, $lot->fresh()->room->version);
     }
 
+    public function test_the_validation_order_follows_the_plan(): void
+    {
+        // 4.1: cerrado → monto bajo → ya es líder → saldo. El primer fallo
+        // define el motivo aunque haya varios.
+        $lot = $this->openLot(['start_price_cents' => 1_000, 'min_increment_cents' => 100]);
+        $ana = $this->bidder(balanceCents: 1_050);
+        $this->auction->placeBid($ana, 1_000);
+
+        // Líder con un monto bajo: manda el monto bajo.
+        $this->assertSame('bid_too_low', $this->auction->placeBid($ana, 1_050)->reason);
+
+        // Líder con un monto válido pero sin saldo: manda que ya es líder.
+        $this->assertSame('already_leading', $this->auction->placeBid($ana, 5_000)->reason);
+
+        // Otro pujador con monto válido sin saldo: manda el saldo.
+        $beto = $this->bidder(balanceCents: 1_000);
+        $this->assertSame('insufficient_balance', $this->auction->placeBid($beto, 1_100)->reason);
+
+        $this->assertSame(1, $lot->bids()->count());
+    }
+
     public function test_bidding_without_an_open_lot_is_rejected(): void
     {
         AuctionRoom::factory()->create();
