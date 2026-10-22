@@ -6,6 +6,7 @@ Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](h
 
 ### Agregado
 
+- `scripts/demo.ps1 tunnel` / `local`: abre dos túneles rápidos de Cloudflare (app y Reverb), apunta las cinco claves del `.env` a sus direcciones, recompila y levanta la demo para entrar desde celulares; `local` vuelve el `.env` a la demo sin túnel. `stop` también corta los túneles.
 - `scripts/demo.ps1`: demo portable en Windows sin instalar nada en el sistema (`setup`, `start`, `stop`, `clean`). Baja PHP 8.4, Node.js 22 y Composer a `demo-tools` con verificación SHA-256, prepara la app, abre tres navegadores con sesiones distintas y, al final, borra el proyecto y las herramientas.
 
 ## [1.1.0] - 2026-10-22

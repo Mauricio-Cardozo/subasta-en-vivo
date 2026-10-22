@@ -95,6 +95,15 @@ Todo lo que se ve sale del servidor: si algo no llega por el canal, se recupera 
 - Si una descarga falla, el script dice qué bajar a mano y dónde guardarlo.
 - `clean` no borra nada fuera del proyecto y `demo-tools`. Después borrá el zip de *Descargas*.
 
+**Con celulares (túnel de Cloudflare), después de `setup`:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1 tunnel   # abre dos túneles, ajusta el .env, recompila y levanta todo
+powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1 local    # vuelve el .env a la demo sin túnel
+```
+
+`tunnel` baja `cloudflared` (un solo `.exe`) a `demo-tools`, abre un túnel para la app (8000) y otro para Reverb (8080) en ventanas propias, lee sus direcciones y cambia solo cinco líneas del `.env`: `APP_URL`, `TRUSTED_PROXIES` y los tres `VITE_REVERB_*` (ver **Probar con un túnel**). Al final muestra la dirección para los celulares (`…/receptor`). Las direcciones cambian cada vez: si se cierran las ventanas de los túneles, hay que correr `tunnel` de nuevo. Si la red bloquea Cloudflare, el script corta enseguida y sugiere `local`.
+
 ## Probar con un túnel (otros dispositivos)
 
 Para que pujen desde celulares u otras redes hay que exponer **dos** puertos: la app (8000) y Reverb (8080). El navegador habla HTTP con la app y WebSocket con Reverb, así que los dos tienen que ser alcanzables desde afuera. Laravel, en cambio, publica en Reverb desde la misma máquina y sigue usando `localhost:8080`.
