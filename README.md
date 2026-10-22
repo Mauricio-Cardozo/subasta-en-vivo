@@ -30,10 +30,13 @@ composer install
 npm ci
 cp .env.example .env
 php artisan key:generate
+php artisan auction:setup        # claves de Reverb y PIN del subastador (muestra el PIN)
 touch database/database.sqlite   # o usar MySQL/PostgreSQL configurando DB_* en .env
 php artisan migrate --seed
 npm run build                    # o npm run dev en desarrollo
 ```
+
+`.env.example` no trae secretos, así que las claves de Reverb y el PIN vienen vacíos: sin ellos Echo no conecta y nadie entra como subastador. `auction:setup` genera solo los que falten (nunca pisa un valor ya configurado) e imprime el PIN. Si cambiás las claves, volvé a correr `npm run build`.
 
 Levantar los tres procesos:
 
