@@ -377,8 +377,10 @@ function Install-Cloudflared {
 
 # Abre un túnel rápido en su propia ventana y devuelve su dirección pública,
 # que cloudflared escribe en el log al crearlo. `$Running` es cuántos
-# cloudflared tienen que quedar vivos con este: si uno se cerró, falló (el
-# motivo sale en su ventana, no en el log).
+# cloudflared tienen que quedar vivos con este. Si este llegó a correr y se
+# cerró, falló (el motivo sale en su ventana, no en el log). Antes de verlo
+# correr no se concluye nada: la primera vez, Windows revisa el .exe recién
+# bajado y tarda varios segundos en arrancarlo.
 function Start-Tunnel([string] $Name, [int] $Port, [int] $Running) {
     $log = Join-Path $TunnelLogs "$Name.log"
     Remove-Item $log -ErrorAction SilentlyContinue
@@ -386,9 +388,20 @@ function Start-Tunnel([string] $Name, [int] $Port, [int] $Running) {
     Start-Window "Subasta - tunel $Name (no cerrar)" ("& '$Cloudflared' tunnel --no-autoupdate --logfile '$log' " +
         "--url http://127.0.0.1:$Port")
 
+    $started = $false
     for ($i = 0; $i -lt 90; $i++) {
+        $content = $null
         if (Test-Path $log) {
-            $found = [regex]::Matches((Get-Content $log -Raw), 'https://[a-z0-9-]+\.trycloudflare\.com') |
+            # cloudflared tiene el log abierto: si justo no se puede leer, se
+            # reintenta en la próxima vuelta.
+            try {
+                $content = Get-Content $log -Raw
+            } catch {
+                $content = $null
+            }
+        }
+        if ($content) {
+            $found = [regex]::Matches($content, 'https://[a-z0-9-]+\.trycloudflare\.com') |
                 ForEach-Object { $_.Value } |
                 Where-Object { $_ -ne 'https://api.trycloudflare.com' } |
                 Select-Object -First 1
@@ -396,7 +409,10 @@ function Start-Tunnel([string] $Name, [int] $Port, [int] $Running) {
                 return $found
             }
         }
-        if ($i -ge 5 -and @(Get-TunnelProcesses).Count -lt $Running) {
+        $alive = @(Get-TunnelProcesses).Count -ge $Running
+        if ($alive) {
+            $started = $true
+        } elseif ($started) {
             break
         }
         Start-Sleep -Seconds 1
