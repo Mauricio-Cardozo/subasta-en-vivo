@@ -75,6 +75,26 @@ La configuración de Reverb (`REVERB_*` y `VITE_REVERB_*`) vive en `.env`; el re
 
 Todo lo que se ve sale del servidor: si algo no llega por el canal, se recupera por HTTP al reconectar.
 
+## Presentar en una notebook prestada (Windows, sin instalar nada)
+
+`scripts/demo.ps1` baja PHP 8.4, Node.js 22 y Composer en versiones **portables** a una carpeta `demo-tools` junto al proyecto, prepara la app y la levanta. No toca el PATH del sistema ni el registro: el PATH se cambia solo en las ventanas que abre el script, y los cachés de Composer y npm quedan en `demo-tools`. Cada descarga se verifica con su SHA-256.
+
+1. Creá una carpeta, por ejemplo `C:\demo-subasta`, y descomprimí ahí el zip del proyecto (*Code → Download ZIP* en GitHub).
+2. Abrí PowerShell en la carpeta del proyecto y corré:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1 setup   # una vez: descarga, instala dependencias y muestra el PIN
+   powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1 start   # abre la app, Reverb y tres navegadores
+   powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1 stop    # corta la app y Reverb
+   powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1 clean   # borra el proyecto y demo-tools (pide escribir BORRAR)
+   ```
+
+`-ExecutionPolicy Bypass` vale solo para ese comando. `start` abre `/emisor` en Chrome y `/receptor` en Chrome incógnito y en Edge: tres sesiones distintas (las ventanas de incógnito de Chrome comparten sesión entre sí). Reverb escucha en `127.0.0.1`, así que el firewall de Windows no pregunta nada.
+
+- Si PHP no arranca y Windows menciona `VCRUNTIME140.dll`, falta el *Microsoft Visual C++ Redistributable* (x64); es lo único que se instalaría en el sistema.
+- Si una descarga falla, el script dice qué bajar a mano y dónde guardarlo.
+- `clean` no borra nada fuera del proyecto y `demo-tools`. Después borrá el zip de *Descargas*.
+
 ## Probar con un túnel (otros dispositivos)
 
 Para que pujen desde celulares u otras redes hay que exponer **dos** puertos: la app (8000) y Reverb (8080). El navegador habla HTTP con la app y WebSocket con Reverb, así que los dos tienen que ser alcanzables desde afuera. Laravel, en cambio, publica en Reverb desde la misma máquina y sigue usando `localhost:8080`.
