@@ -188,7 +188,9 @@ function formatTime(iso) {
 
     const date = new Date(iso);
 
-    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('es-AR');
+    // `hourCycle: 'h23'`: con `es-AR` el navegador usa 12 horas sin "a. m./p. m."
+    // y las 15:30 se verían como 03:30.
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('es-AR', { hourCycle: 'h23' });
 }
 
 /** `m:ss` a partir de milisegundos restantes. */
@@ -356,7 +358,7 @@ function renderHistory(history) {
         row.className = 'flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-950/40 px-3 py-2';
 
         if (lot.closed_at) {
-            row.title = new Date(lot.closed_at).toLocaleString('es-AR');
+            row.title = new Date(lot.closed_at).toLocaleString('es-AR', { hourCycle: 'h23' });
         }
 
         const title = document.createElement('span');

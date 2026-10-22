@@ -72,7 +72,11 @@ class AdminDashboardTest extends TestCase
         $series = app(AdminDashboard::class)->bidsPerMinute(5);
 
         $this->assertSame([0, 0, 1, 0, 3], array_column($series, 'count'));
-        $this->assertSame(now()->format('H:i'), end($series)['minute']);
+        // Las etiquetas van en la hora de la sala, no en la UTC del servidor.
+        $this->assertSame(
+            now()->setTimezone('America/Argentina/Buenos_Aires')->format('H:i'),
+            end($series)['minute'],
+        );
     }
 
     public function test_the_panel_lists_audited_actions_and_slow_queries(): void

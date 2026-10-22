@@ -22,6 +22,11 @@ return [
     // Moneda usada solo al mostrar montos.
     'currency' => 'ARS',
 
+    // Zona horaria para mostrar horas armadas en el servidor (panel /admin).
+    // Las fechas se guardan y comparan en `app.timezone` (UTC); esto es solo
+    // presentación, igual que el formato de los montos.
+    'display_timezone' => env('AUCTION_DISPLAY_TIMEZONE', 'America/Argentina/Buenos_Aires'),
+
     'participant' => [
         // Saldo virtual inicial de cada pujador: 100 000 centavos = $1.000,00.
         'starting_balance_cents' => 100_000,

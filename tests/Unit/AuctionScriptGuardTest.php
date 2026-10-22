@@ -314,4 +314,23 @@ class AuctionScriptGuardTest extends TestCase
         $this->assertStringNotContainsString('innerHTML', $code);
         $this->assertStringContainsString("import './presence';", file_get_contents(resource_path('js/auction.js')));
     }
+
+    /**
+     * Las horas se muestran en 24 horas: con `es-AR` el formato por defecto es
+     * de 12 horas sin "a. m./p. m." y las 15:30 se leían como 03:30.
+     */
+    public function test_times_are_formatted_with_a_24_hour_clock(): void
+    {
+        foreach (['js/auction.js', 'js/chat.js'] as $script) {
+            $code = $this->code(file_get_contents(resource_path($script)));
+
+            preg_match_all("/toLocale(?:Time)?String\\('es-AR'([^)]*)\\)/", $code, $calls);
+
+            $this->assertNotEmpty($calls[0], "{$script} no formatea horas.");
+
+            foreach ($calls[1] as $options) {
+                $this->assertStringContainsString("hourCycle: 'h23'", $options, "{$script}: falta hourCycle h23.");
+            }
+        }
+    }
 }

@@ -2,10 +2,14 @@
 
 Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](https://keepachangelog.com/) y [SemVer](https://semver.org/).
 
-## [Sin publicar]
+## [1.1.0] - 2026-10-22
+
+El plan completo: lo que faltaba de los requisitos, el canal de presencia de la consigna y la puesta a punto para presentar.
 
 ### Agregado
 
+- `php artisan auction:setup`: completa en `.env` las claves de Reverb y el PIN del subastador que estén vacíos (nunca pisa un valor configurado) e imprime el PIN. Va en la instalación del README y en `composer setup`.
+- Capturas en el README (`docs/capturas/`): subastador, pujador, pujador en el celular y panel.
 - Cola de lotes con auto-avance: abrir un lote con otro abierto lo encola (FIFO, tope `auction.queue.max`) y, tras la pausa `auction.queue.gap_seconds`, el siguiente se abre solo; `DELETE /auction/lots/{id}` lo quita de la cola.
 - El pujador propone su monto (RF-03): campo en pesos (coma o punto) que sugiere la puja mínima y manda `amount_cents` en centavos enteros.
 - Auditoría persistente (RF-15): `auction_actions` registra cada acción, aceptada o rechazada, con `type`, `participant_id`, `ip`, `payload`, `accepted`, `reason`, `result` y `correlation_id`; cada cierre suma una fila `lot_closed` con su causa (`time`/`manual`).
@@ -28,6 +32,9 @@ Todo notable de este proyecto se documenta aquí, siguiendo [Keep a Changelog](h
 
 ### Corregido
 
+- Las horas del chat, las pujas y el historial se muestran en 24 horas: con `es-AR` el navegador usaba 12 horas sin "a. m./p. m." y las 15:30 aparecían como 03:30.
+- El panel `/admin` muestra las horas en la zona de la sala (`AUCTION_DISPLAY_TIMEZONE`, por defecto Buenos Aires) en vez de UTC; las fechas se siguen guardando en UTC.
+- La CI corre la suite completa también en PostgreSQL.
 - `auction_actions.actor_key` admite 100 caracteres: la de un visitante sin identidad mide 72 y PostgreSQL rechazaba la fila de su denegación (500).
 - La pausa de la cola abre el siguiente lote justo en `queue_opens_at`, con el mismo borde que el vencimiento.
 - Una puja que llegaba **exactamente** en `ends_at` se aceptaba (y extendía el cierre por anti-sniping), y `GET /auction/state` no cerraba el lote en ese instante. El plazo se comparaba con `isPast()`, que es falso justo en `ends_at`; ahora `Lot::hasExpired()` respeta el intervalo `[started_at, ends_at)` de la sección 4.2 del plan.

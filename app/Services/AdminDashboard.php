@@ -26,12 +26,12 @@ class AdminDashboard
         $counts = Bid::query()
             ->where('created_at', '>=', $since)
             ->pluck('created_at')
-            ->countBy(fn (Carbon $at): string => $at->format('H:i'));
+            ->countBy(fn (Carbon $at): string => $this->local($at)->format('H:i'));
 
         $series = [];
 
         for ($minute = $since->copy(); $minute->lte(now()); $minute->addMinute()) {
-            $label = $minute->format('H:i');
+            $label = $this->local($minute)->format('H:i');
             $series[] = ['minute' => $label, 'count' => (int) ($counts[$label] ?? 0)];
         }
 
@@ -51,7 +51,7 @@ class AdminDashboard
             ->limit($limit)
             ->get()
             ->map(fn (AuctionAction $action): array => [
-                'at' => $action->created_at?->format('H:i:s') ?? '—',
+                'at' => $action->created_at ? $this->local($action->created_at)->format('H:i:s') : '—',
                 'type' => $action->type,
                 'actor' => $action->participant?->name
                     ?? (str_starts_with($action->actor_key, 'host:') ? config('auction.chat.host_name') : $action->actor_key),
@@ -95,7 +95,7 @@ class AdminDashboard
             }
 
             $queries[] = [
-                'at' => Carbon::parse($record['datetime'] ?? 'now')->format('H:i:s'),
+                'at' => $this->local(Carbon::parse($record['datetime'] ?? 'now'))->format('H:i:s'),
                 'ms' => (float) ($record['context']['ms'] ?? 0),
                 'sql' => (string) ($record['context']['sql'] ?? ''),
                 'correlation_id' => $record['context']['correlation_id'] ?? null,
@@ -107,5 +107,14 @@ class AdminDashboard
         }
 
         return $queries;
+    }
+
+    /**
+     * Hora para mostrar: la de la sala (`auction.display_timezone`), la misma
+     * que ven los navegadores en Argentina, en vez de la UTC del servidor.
+     */
+    private function local(Carbon $at): Carbon
+    {
+        return $at->copy()->setTimezone((string) config('auction.display_timezone'));
     }
 }

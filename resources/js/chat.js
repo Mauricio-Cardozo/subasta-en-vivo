@@ -70,7 +70,9 @@ function formatTime(iso) {
 
     const date = new Date(iso);
 
-    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('es-AR');
+    // `hourCycle: 'h23'`: con `es-AR` el navegador usa 12 horas sin "a. m./p. m."
+    // y las 15:30 se verían como 03:30.
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('es-AR', { hourCycle: 'h23' });
 }
 
 function csrfToken() {

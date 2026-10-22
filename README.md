@@ -17,6 +17,18 @@ Los nombres describen el rol de cada pantalla, no una limitación técnica: ambo
 2. Se emite broadcast **después** del commit, nunca dentro de la transacción.
 3. Reverb no reemplaza al endpoint de estado: el estado se carga y se recupera por HTTP.
 
+## Capturas
+
+Una sala con el subastador y tres pujadores conectados: un lote ya vendido en el historial, un lote en curso con pujas y el chat.
+
+| Subastador (`/emisor`) | Pujador (`/receptor`) |
+|---|---|
+| ![Pantalla del subastador: apertura y cierre de lotes, lote en curso, quién está en la sala, historial y chat](docs/capturas/emisor.png) | ![Pantalla del pujador: saldo, campo de oferta con la puja mínima, pujas recientes, quién está en la sala, historial y chat](docs/capturas/receptor.png) |
+
+| Pujador en el celular | Panel del subastador (`/admin`) |
+|---|---|
+| ![La pantalla del pujador en un celular](docs/capturas/receptor-celular.png) | ![Panel con pujas por minuto, últimas acciones auditadas y consultas lentas](docs/capturas/admin.png) |
+
 ## Stack
 
 - Laravel 12 · Reverb · Laravel Echo · Blade + JS
@@ -276,7 +288,7 @@ tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 - [x] **Hito 6 — Logging y trazabilidad:** canales `auction`/`audit` en JSON con rotación diaria, `correlation_id` de punta a punta (`X-Correlation-ID` en la respuesta) y auditoría de acciones con el `action_id` y el resultado.
 - [x] **Hito 7 — Pulido y entrega:** historial de lotes cerrados en el snapshot público, estados de conexión con color y región viva, README de entrega y release `v1.0.0`.
 
-**Después de `v1.0.0`** (para cerrar el plan completo y la consigna de canales):
+**Versión `v1.1.0`** (cierra el plan completo y la consigna de canales):
 
 - [x] Cola de lotes con auto-avance (opcional del Hito 7).
 - [x] Túnel para probar desde otros dispositivos y borde exacto de `ends_at`.
@@ -286,6 +298,7 @@ tests/Feature/, tests/Unit/   # ConcurrencyTest solo corre con PostgreSQL/MySQL
 - [x] Chat con borrado lógico, `after_id` e idempotencia (6).
 - [x] `auction:close-expired` (4.4) y panel `/admin` (RF-18).
 - [x] Canal de presencia: quién está en la sala.
+- [x] `auction:setup` para instalar en una máquina nueva, horas en 24 horas y capturas en el README.
 
 Cada hito es un milestone en GitHub; cada tarea, un issue; cada issue, una rama y un PR.
 
