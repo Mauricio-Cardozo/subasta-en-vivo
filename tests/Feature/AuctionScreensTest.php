@@ -171,7 +171,9 @@ class AuctionScreensTest extends TestCase
             ->assertOk()
             ->assertSee('data-bid-section', escape: false)
             ->assertSee('data-bid class', escape: false)
-            ->assertSee('data-bid-minimum', escape: false);
+            ->assertSee('data-bid-minimum', escape: false)
+            // El pujador propone su monto (RF-03).
+            ->assertSee('data-bid-amount', escape: false);
     }
 
     public function test_the_bidder_screen_lists_recent_bids(): void

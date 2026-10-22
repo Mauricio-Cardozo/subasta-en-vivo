@@ -100,15 +100,19 @@ class AuctionScriptGuardTest extends TestCase
      * la información que tiene en la transacción. Solo viaja un `action_id`
      * nuevo por intento, que es lo que hace la acción idempotente.
      */
-    public function test_the_bid_request_carries_only_an_action_id(): void
+    public function test_the_bid_request_proposes_an_integer_amount(): void
     {
         $code = $this->code(file_get_contents(resource_path('js/auction.js')));
 
         $this->assertStringContainsString(
-            'postJson(endpoints.bid, { action_id: newActionId() })',
+            'postJson(endpoints.bid, { action_id: newActionId(), amount_cents: amountCents })',
             $code,
-            'La puja debe ir solo con un action_id: el monto lo decide el servidor.'
+            'La puja propone un monto (RF-03) y lleva un action_id para los reintentos.'
         );
+
+        // Los centavos salen de partir el texto, no de multiplicar un float.
+        $this->assertStringContainsString('function inputToCents(value)', $code);
+        $this->assertStringNotContainsString('* 100)', $code);
     }
 
     /**

@@ -28,6 +28,12 @@ const state = {
 let bidding = false;
 
 /**
+ * El pujador editó el monto: el mínimo ya no lo pisa hasta la próxima puja
+ * propia, salvo que el precio lo deje por debajo del mínimo.
+ */
+let bidAmountTouched = false;
+
+/**
  * Ancla del temporizador. Se recalcula con el `remaining_ms` del servidor (no
  * con el reloj del navegador): al llegar un evento (una puja que extiende el
  * cierre, por ejemplo) el restante se reajusta solo. Durante la pausa entre
@@ -94,6 +100,7 @@ const selectors = {
     historyEmpty: '[data-history-empty]',
     bidSection: '[data-bid-section]',
     bidMinimum: '[data-bid-minimum]',
+    bidAmount: '[data-bid-amount]',
     bidForm: '[data-bid]',
     closeSection: '[data-close-section]',
     closeForm: '[data-close-lot]',
@@ -455,12 +462,46 @@ function renderBidForm() {
 
     setText(selectors.bidMinimum, minimum === null ? '—' : `Puja mínima ${formatCents(minimum)}`);
 
+    const input = find(selectors.bidAmount);
+
+    if (input && minimum !== null) {
+        input.min = centsToInput(minimum);
+
+        // Sugerencia: el mínimo, salvo que el pujador ya haya escrito un monto
+        // que todavía alcanza. La validación real es la del servidor.
+        const typed = inputToCents(input.value);
+
+        if (! bidAmountTouched || typed === null || typed < minimum) {
+            input.value = centsToInput(minimum);
+            bidAmountTouched = false;
+        }
+
+        input.disabled = leading || bidding;
+    }
+
     if (button) {
-        button.textContent = leading
-            ? 'Ya vas ganando este lote'
-            : (minimum === null ? 'Pujar' : `Pujar ${formatCents(minimum)}`);
+        button.textContent = leading ? 'Ya vas ganando este lote' : 'Pujar';
         button.disabled = leading || bidding;
     }
+}
+
+/** Centavos enteros → texto del campo en pesos ("12.50"). */
+function centsToInput(cents) {
+    return (cents / 100).toFixed(2);
+}
+
+/**
+ * Texto del campo en pesos → centavos enteros, o null si no es un monto.
+ * Se parte el texto en vez de multiplicar un float: 0.29 * 100 no es 29.
+ */
+function inputToCents(value) {
+    const match = /^\s*(\d+)(?:[.,](\d{1,2}))?\s*$/.exec(String(value ?? ''));
+
+    if (! match) {
+        return null;
+    }
+
+    return Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'));
 }
 
 function renderCloseForm() {
@@ -664,9 +705,10 @@ function numberField(data, name) {
 /**
  * Puja del pujador.
  *
- * Solo manda `action_id`: el monto efectivo lo decide el servidor y un error
- * (422) se muestra tal cual, nunca se pinta como éxito. Al confirmarse, se
- * vuelve a pedir el estado por HTTP: el bloque `me` no viaja en el broadcast.
+ * Manda el monto propuesto en centavos enteros y un `action_id`: el servidor
+ * decide si alcanza y un error (422) se muestra tal cual, nunca se pinta como
+ * éxito. Al confirmarse, se vuelve a pedir el estado por HTTP: el bloque `me`
+ * no viaja en el broadcast.
  */
 function wireBidForm() {
     const form = find(selectors.bidForm);
@@ -674,6 +716,10 @@ function wireBidForm() {
     if (! form) {
         return;
     }
+
+    find(selectors.bidAmount)?.addEventListener('input', () => {
+        bidAmountTouched = true;
+    });
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -683,11 +729,23 @@ function wireBidForm() {
         }
 
         clearFormError(form);
+
+        const amountCents = inputToCents(find(selectors.bidAmount)?.value);
+
+        if (amountCents === null || amountCents <= 0) {
+            showFormError(form, 'Escribí un monto válido, por ejemplo 125 o 125,50.');
+
+            return;
+        }
+
         bidding = true;
         renderBidForm();
 
         try {
-            await postJson(endpoints.bid, { action_id: newActionId() });
+            // El monto es una propuesta: el servidor lo valida bajo bloqueo
+            // contra el mínimo y el saldo (RF-03, RNF-01).
+            await postJson(endpoints.bid, { action_id: newActionId(), amount_cents: amountCents });
+            bidAmountTouched = false;
             await loadState();
         } catch (error) {
             showFormError(form, error.message);
