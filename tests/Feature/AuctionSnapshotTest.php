@@ -35,6 +35,10 @@ class AuctionSnapshotTest extends TestCase
         $this->assertNull($state['lot']);
         $this->assertSame([], $state['bids']);
         $this->assertSame([], $state['history']);
+        $this->assertSame(
+            ['opens_at' => null, 'opens_in_ms' => null, 'items' => []],
+            $state['queue']
+        );
         $this->assertNull($state['action']);
         $this->assertArrayHasKey('server_now', $state);
     }
@@ -78,7 +82,7 @@ class AuctionSnapshotTest extends TestCase
 
         $this->assertArrayNotHasKey('me', $state);
         $this->assertSame(
-            ['version', 'server_now', 'lot', 'bids', 'history', 'action', 'correlation_id'],
+            ['version', 'server_now', 'lot', 'bids', 'history', 'queue', 'action', 'correlation_id'],
             array_keys($state)
         );
     }
@@ -243,5 +247,74 @@ class AuctionSnapshotTest extends TestCase
         foreach (self::INTERNAL_KEYS as $key) {
             $this->assertArrayNotHasKey($key, $entry);
         }
+    }
+
+    public function test_the_queue_block_lists_lots_in_order_with_public_fields(): void
+    {
+        $room = AuctionRoom::factory()->create();
+        $open = Lot::factory()->for($room, 'room')->create(['title' => 'Abierto']);
+        $room->update(['current_lot_id' => $open->id, 'version' => 1]);
+
+        $first = Lot::factory()->for($room, 'room')->queued()->create([
+            'title' => 'Primero',
+            'start_price_cents' => 1_000,
+        ]);
+        Lot::factory()->for($room, 'room')->queued()->create([
+            'title' => 'Segundo',
+            'start_price_cents' => 2_000,
+        ]);
+
+        $queue = (new AuctionSnapshot($room->fresh()))->build()['queue'];
+
+        $this->assertNull($queue['opens_at']);
+        $this->assertNull($queue['opens_in_ms']);
+        $this->assertSame(['Primero', 'Segundo'], array_column($queue['items'], 'title'));
+        $this->assertSame($first->id, $queue['items'][0]['id']);
+        $this->assertSame(1_000, $queue['items'][0]['start_price_cents']);
+
+        // Solo lo público: los items cargan id, título y precio base.
+        $this->assertSame(['id', 'title', 'start_price_cents'], array_keys($queue['items'][0]));
+    }
+
+    public function test_the_queue_block_is_capped_by_config(): void
+    {
+        config()->set('auction.queue.max', 2);
+
+        $room = AuctionRoom::factory()->create();
+        Lot::factory()->for($room, 'room')->queued()->count(4)->create();
+
+        $this->assertCount(2, (new AuctionSnapshot($room->fresh()))->build()['queue']['items']);
+    }
+
+    public function test_the_queue_block_reports_the_open_mark_during_the_pause(): void
+    {
+        $room = AuctionRoom::factory()->create([
+            'queue_opens_at' => now()->addSeconds(5),
+        ]);
+
+        $queue = (new AuctionSnapshot($room->fresh()))->build()['queue'];
+
+        $this->assertNotNull($queue['opens_at']);
+        $this->assertGreaterThan(0, $queue['opens_in_ms']);
+        $this->assertLessThanOrEqual(5_000, $queue['opens_in_ms']);
+    }
+
+    public function test_the_history_excludes_queued_and_cancelled_lots(): void
+    {
+        $room = AuctionRoom::factory()->create();
+
+        Lot::factory()->for($room, 'room')->queued()->create(['title' => 'En cola']);
+        Lot::factory()->for($room, 'room')->closed()->create([
+            'title' => 'Quitado',
+            'status' => LotStatus::Cancelled,
+        ]);
+        Lot::factory()->for($room, 'room')->closed()->create([
+            'title' => 'Vendido',
+            'status' => LotStatus::Sold,
+        ]);
+
+        $history = (new AuctionSnapshot($room->fresh()))->build()['history'];
+
+        $this->assertSame(['Vendido'], array_column($history, 'title'));
     }
 }

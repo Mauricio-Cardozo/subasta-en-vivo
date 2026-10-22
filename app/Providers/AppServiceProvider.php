@@ -70,6 +70,10 @@ class AppServiceProvider extends ServiceProvider
             config('auction.limits.lot_closes_per_minute')
         )->by($request->ip()));
 
+        RateLimiter::for('lot-deletes', fn (Request $request) => Limit::perMinute(
+            config('auction.limits.lot_deletes_per_minute')
+        )->by($request->ip()));
+
         RateLimiter::for('bids', function (Request $request) {
             $participant = $request->session()->get(SessionIdentity::PARTICIPANT_KEY);
 

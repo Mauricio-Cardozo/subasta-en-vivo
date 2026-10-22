@@ -15,7 +15,7 @@ class AuctionConfigTest extends TestCase
         $this->assertSame(100, config('auction.lot.min_increment_cents'));
         $this->assertSame(60, config('auction.lot.duration_seconds'));
 
-        foreach (['bids_per_second', 'chat_messages_per_second', 'lot_opens_per_minute'] as $limit) {
+        foreach (['bids_per_second', 'chat_messages_per_second', 'lot_opens_per_minute', 'lot_deletes_per_minute'] as $limit) {
             $this->assertIsInt(config("auction.limits.{$limit}"), "auction.limits.{$limit} debe ser entero.");
         }
 
@@ -26,6 +26,12 @@ class AuctionConfigTest extends TestCase
         $this->assertSame(280, config('auction.chat.max_length'));
         $this->assertSame(50, config('auction.chat.history'));
         $this->assertSame(10, config('auction.snapshot.bids'));
+    }
+
+    public function test_the_queue_values_are_present_and_integral(): void
+    {
+        $this->assertSame(10, config('auction.queue.max'));
+        $this->assertSame(8, config('auction.queue.gap_seconds'));
     }
 
     public function test_the_host_pin_comes_from_the_environment(): void
