@@ -62,7 +62,9 @@ jobs:
       - name: Tests
         run: php artisan test
 
-      - name: Concurrency tests (PostgreSQL)
+      # La suite completa, no solo la concurrencia: PostgreSQL controla cosas
+      # que SQLite deja pasar (el largo de un varchar, por ejemplo).
+      - name: Tests (PostgreSQL)
         env:
           DB_CONNECTION: pgsql
           DB_HOST: 127.0.0.1
@@ -70,4 +72,4 @@ jobs:
           DB_DATABASE: auction_test
           DB_USERNAME: auction
           DB_PASSWORD: secret
-        run: php artisan test --filter=ConcurrencyTest
+        run: php artisan test

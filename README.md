@@ -99,7 +99,7 @@ Sin `TRUSTED_PROXIES` la página carga los assets con `http://` dentro de `https
 php artisan test           # tests
 ```
 
-La CI de GitHub Actions corre ambos (más `npm run build`) en cada PR y bloquea el merge en `main` si fallan. Además levanta un PostgreSQL y corre ahí los tests de concurrencia (`--filter=ConcurrencyTest`), que en SQLite se saltan porque ese motor no bloquea filas.
+La CI de GitHub Actions corre ambos (más `npm run build`) en cada PR y bloquea el merge en `main` si fallan. Además levanta un PostgreSQL y corre ahí la suite completa, incluidos los tests de concurrencia, que en SQLite se saltan porque ese motor no bloquea filas.
 
 ```bash
 # Concurrencia real (opcional, en local):
